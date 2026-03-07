@@ -42,10 +42,7 @@
       "author": {
         "name": "adibirzu"
       },
-      "source": {
-        "source": "url",
-        "url": "https://github.com/adibirzu/multillm.git"
-      },
+      "source": "./plugins/multillm",
       "category": "development",
       "homepage": "https://github.com/adibirzu/multillm"
     }
