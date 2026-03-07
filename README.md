@@ -8,6 +8,7 @@ Claude Code plugin marketplace by [adibirzu](https://github.com/adibirzu).
 |--------|-------------|---------|
 | [prod-ready](https://github.com/adibirzu/claude-prod-ready-plugin) | Pre-production security audit, dependency hardening, CI/CD validation, and Docker readiness checks | 1.0.0 |
 | [rlm](https://github.com/adibirzu/rlm-plugin) | Recursive Language Model v3 — dual-mode execution, git-aware incremental analysis, memory persistence | 3.0.0 |
+| [multillm](https://github.com/adibirzu/multillm) | Multi-LLM gateway with 16+ backends, model discovery, session tracking, usage dashboard, and cross-LLM memory | 0.5.1 |
 
 ## Installation
 
@@ -22,6 +23,7 @@ Then install individual plugins:
 ```bash
 /plugin install prod-ready@adibirzu-plugins
 /plugin install rlm@adibirzu-plugins
+/plugin install multillm@adibirzu-plugins
 ```
 
 ## License

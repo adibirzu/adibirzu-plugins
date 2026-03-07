@@ -34,6 +34,20 @@
       },
       "category": "development",
       "homepage": "https://github.com/adibirzu/rlm-plugin"
+    },
+    {
+      "name": "multillm",
+      "description": "Multi-LLM gateway with 16+ backends, model discovery, session tracking, usage dashboard, cross-LLM memory, and Claude Code plugin integration",
+      "version": "0.5.1",
+      "author": {
+        "name": "adibirzu"
+      },
+      "source": {
+        "source": "url",
+        "url": "https://github.com/adibirzu/multillm.git"
+      },
+      "category": "development",
+      "homepage": "https://github.com/adibirzu/multillm"
     }
   ]
 }
