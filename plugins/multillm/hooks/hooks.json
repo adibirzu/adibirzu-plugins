@@ -1,14 +1,17 @@
 {
-  "SessionStart": [
-    {
-      "hooks": [
-        {
-          "type": "command",
-          "command": "$HOME/dev/multillm/hooks/start-gateway.sh",
-          "timeout": 15,
-          "statusMessage": "Starting MultiLLM gateway..."
-        }
-      ]
-    }
-  ]
+  "description": "Start the MultiLLM gateway automatically on Claude session start",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/start-gateway.sh",
+            "timeout": 15,
+            "statusMessage": "Starting MultiLLM gateway..."
+          }
+        ]
+      }
+    ]
+  }
 }

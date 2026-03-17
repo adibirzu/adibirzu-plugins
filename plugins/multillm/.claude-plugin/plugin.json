@@ -1,0 +1,7 @@
+{
+  "name": "multillm",
+  "description": "Multi-LLM gateway plugin for Claude Code and Codex workflows",
+  "author": {
+    "name": "adibirzu"
+  }
+}
