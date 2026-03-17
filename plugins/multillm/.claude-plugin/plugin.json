@@ -1,7 +1,10 @@
 {
   "name": "multillm",
-  "description": "Multi-LLM gateway plugin for Claude Code and Codex workflows",
+  "version": "0.7.0",
+  "description": "Multi-LLM gateway plugin for Claude Code and Codex workflows — phase-based orchestration, 8 agents, 11 commands, checkpoint discipline",
   "author": {
     "name": "adibirzu"
-  }
+  },
+  "homepage": "https://github.com/adibirzu/multillm",
+  "repository": "https://github.com/adibirzu/multillm.git"
 }

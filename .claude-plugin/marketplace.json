@@ -37,8 +37,8 @@
     },
     {
       "name": "multillm",
-      "description": "Multi-LLM gateway with 16+ backends, model discovery, session tracking, usage dashboard, cross-LLM memory, and Claude Code plugin integration",
-      "version": "0.5.1",
+      "description": "Multi-LLM gateway with 16+ backends, model discovery, session tracking, hourly usage dashboard, cross-LLM memory, and Claude/Codex workflows",
+      "version": "0.7.0",
       "author": {
         "name": "adibirzu"
       },

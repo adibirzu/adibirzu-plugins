@@ -1,5 +1,5 @@
 {
-  "description": "Start the MultiLLM gateway automatically on Claude session start",
+  "description": "Start the MultiLLM gateway and check for plugin updates on session start",
   "hooks": {
     "SessionStart": [
       {
@@ -9,6 +9,12 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/start-gateway.sh",
             "timeout": 15,
             "statusMessage": "Starting MultiLLM gateway..."
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/check-update.sh",
+            "timeout": 5,
+            "statusMessage": "Checking for MultiLLM updates..."
           }
         ]
       }
