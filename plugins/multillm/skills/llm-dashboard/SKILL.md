@@ -18,18 +18,18 @@ curl -s 'http://localhost:8080/api/dashboard?hours=HOURS' | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
 t = d.get('totals', {})
-total = (t.get('total_input',0) or 0) + (t.get('total_output',0) or 0) + (t.get('total_cache_read_input',0) or 0) + (t.get('total_cache_creation_input',0) or 0)
+total = (t.get('total_input',0) or 0) + (t.get('total_output',0) or 0)
 reqs = t.get('total_requests',0) or 0
 sessions = d.get('session_count',0) or 0
 cost = t.get('total_cost',0) or 0
 derived = d.get('derived', {})
 print(f'Window:   {d.get(\"hours\", \"HOURS\")}h')
-print(f'Requests: {reqs:,}  |  Tokens: {total:,} ({t.get(\"total_input\",0):,} in / {t.get(\"total_output\",0):,} out / {t.get(\"total_cache_read_input\",0):,} cache read / {t.get(\"total_cache_creation_input\",0):,} cache write)  |  Cost: \${cost:.4f}')
+print(f'Requests: {reqs:,}  |  Tokens: {total:,} ({t.get(\"total_input\",0):,} in / {t.get(\"total_output\",0):,} out)  |  Cost: \${cost:.4f}')
 print(f'Rates:    {derived.get(\"avg_requests_per_session\",0):.2f} req/session  |  {derived.get(\"avg_tokens_per_request\",0):.1f} tok/req  |  \${derived.get(\"avg_cost_per_request\",0):.6f}/req')
 for m in d.get('by_model', [])[:10]:
-    tok = (m.get('input_tokens',0) or 0) + (m.get('output_tokens',0) or 0) + (m.get('cache_read_input_tokens',0) or 0) + (m.get('cache_creation_input_tokens',0) or 0)
+    tok = (m.get('input_tokens',0) or 0) + (m.get('output_tokens',0) or 0)
     reqs = m.get('requests',0) or 0
-    print(f'  {m[\"model_alias\"]:25s} {reqs:4d} reqs  {tok:>10,} tok  cr {m.get(\"cache_read_input_tokens\",0):>8,}  cw {m.get(\"cache_creation_input_tokens\",0):>8,}  {(tok / reqs) if reqs else 0:>8.1f} tok/req  \${m.get(\"cost_usd\",0):.4f}')
+    print(f'  {m[\"model_alias\"]:25s} {reqs:4d} reqs  {tok:>10,} tok  {(tok / reqs) if reqs else 0:>8.1f} tok/req  \${m.get(\"cost_usd\",0):.4f}')
 "
 ```
 
@@ -50,7 +50,6 @@ for s in json.load(sys.stdin):
 3. Present a formatted summary of:
    - Total requests, tokens, and estimated costs per model
    - Derived calculations such as request/session, token/request, and cost/request
-   - Cache-aware token classes: input, output, cache read, and cache write
    - Active backends and available models
    - Recent sessions with duration and models used
    - Hourly rates when the user asks for a short window such as `1h`, `3h`, `6h`, or `12h`
