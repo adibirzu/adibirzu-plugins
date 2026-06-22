@@ -17,20 +17,18 @@ hours = d.get('hours', 'HOURS')
 derived = d.get('derived', {})
 inp = t.get('total_input',0) or 0
 out = t.get('total_output',0) or 0
-cache_read = t.get('total_cache_read_input',0) or 0
-cache_write = t.get('total_cache_creation_input',0) or 0
-tok = inp + out + cache_read + cache_write
+tok = inp + out
 cost = t.get('total_cost',0) or 0
 print(f'=== MultiLLM Hourly Usage ({hours}h window) ===')
 print(f'Requests/hour: {derived.get(\"requests_per_hour\", 0):.2f}')
 print(f'Tokens/hour:   {derived.get(\"tokens_per_hour\", 0):.1f}')
 print(f'Cost/hour:     \${derived.get(\"cost_per_hour\", 0):.6f}')
-print(f'Total tokens:  {tok:,} ({inp:,} in / {out:,} out / {cache_read:,} cache read / {cache_write:,} cache write)')
+print(f'Total tokens:  {tok:,} ({inp:,} in / {out:,} out)')
 print()
 print('--- Top Models ---')
 for m in d.get('by_model', [])[:10]:
-    mtok = (m.get('input_tokens',0) or 0) + (m.get('output_tokens',0) or 0) + (m.get('cache_read_input_tokens',0) or 0) + (m.get('cache_creation_input_tokens',0) or 0)
-    print(f'  {m[\"model_alias\"]:25s} {m.get(\"requests\",0):4d} reqs  {mtok:>10,} tok  cr {m.get(\"cache_read_input_tokens\",0):>8,}  cw {m.get(\"cache_creation_input_tokens\",0):>8,}  avg {m.get(\"avg_latency_ms\",0):.0f}ms')
+    mtok = (m.get('input_tokens',0) or 0) + (m.get('output_tokens',0) or 0)
+    print(f'  {m[\"model_alias\"]:25s} {m.get(\"requests\",0):4d} reqs  {mtok:>10,} tok  avg {m.get(\"avg_latency_ms\",0):.0f}ms')
 "
 ```
 
