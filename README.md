@@ -1,6 +1,6 @@
 # adibirzu-plugins
 
-Claude Code plugin marketplace by [adibirzu](https://github.com/adibirzu).
+Claude Code plugin marketplace by [adibirzu](https://github.com/adibirzu) for production engineering, multi-model workflows, and OCI cloud operations.
 
 ## Plugins
 
@@ -8,7 +8,8 @@ Claude Code plugin marketplace by [adibirzu](https://github.com/adibirzu).
 |--------|-------------|---------|
 | [prod-ready](https://github.com/adibirzu/claude-prod-ready-plugin) | Pre-production security audit, dependency hardening, CI/CD validation, and Docker readiness checks | 1.0.0 |
 | [rlm](https://github.com/adibirzu/rlm-plugin) | Recursive Language Model v3 — dual-mode execution, git-aware incremental analysis, memory persistence | 3.0.0 |
-| [multillm](https://github.com/adibirzu/multillm) | Multi-LLM gateway with 16+ backends, model discovery, session tracking, usage dashboard, and cross-LLM memory | 0.5.1 |
+| [multillm](https://github.com/adibirzu/multillm) | Multi-LLM gateway with model discovery, session tracking, usage controls, fusion, and cross-LLM memory | 0.9.0 |
+| [oci-administrator](https://github.com/adibirzu/oci-skills) | Safety-first OCI administration, Terraform, platform engineering, storage, disaster recovery, Bastion, database, and landing-zone workflows | 2.0.0-rc.3 |
 
 ## Installation
 
@@ -24,6 +25,15 @@ Then install individual plugins:
 /plugin install prod-ready@adibirzu-plugins
 /plugin install rlm@adibirzu-plugins
 /plugin install multillm@adibirzu-plugins
+/plugin install oci-administrator@adibirzu-plugins
+```
+
+Refresh the catalog and an installed OCI plugin after a release:
+
+```text
+/plugin marketplace update adibirzu-plugins
+/plugin update oci-administrator@adibirzu-plugins
+/reload-plugins
 ```
 
 ## License
