@@ -7,7 +7,7 @@ Claude Code plugin marketplace by [adibirzu](https://github.com/adibirzu) for pr
 | Plugin | Description | Version |
 |--------|-------------|---------|
 | [prod-ready](https://github.com/adibirzu/claude-prod-ready-plugin) | Pre-production security audit, dependency hardening, CI/CD validation, and Docker readiness checks | 1.0.0 |
-| [rlm](https://github.com/adibirzu/rlm-plugin) | Recursive Language Model v3 — dual-mode execution, git-aware incremental analysis, memory persistence | 3.0.0 |
+| [rlm](https://github.com/adibirzu/rlm-plugin) | Recursive, evidence-backed analysis for repositories and large document sets | 3.1.1 |
 | [multillm](https://github.com/adibirzu/multillm) | Multi-LLM gateway with model discovery, session tracking, usage controls, fusion, and cross-LLM memory | 0.9.0 |
 | [oci-administrator](https://github.com/adibirzu/oci-skills) | Safety-first OCI administration, Terraform, platform engineering, storage, disaster recovery, Bastion, database, and landing-zone workflows | 2.0.0-rc.3 |
 
