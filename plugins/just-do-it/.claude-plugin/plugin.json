@@ -1,0 +1,12 @@
+{
+  "name": "just-do-it",
+  "version": "1.2.0",
+  "description": "Turn one goal into reviewed PRDs and model-tiered agent tasks with secure autonomy, durable recovery, and scoped break glass.",
+  "author": {
+    "name": "adibirzu",
+    "url": "https://github.com/adibirzu"
+  },
+  "homepage": "https://github.com/adibirzu/adibirzu-plugins",
+  "repository": "https://github.com/adibirzu/adibirzu-plugins.git",
+  "license": "MIT"
+}
