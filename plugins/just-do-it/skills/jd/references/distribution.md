@@ -4,6 +4,9 @@ JD is a portable skill, but its preferred named Codex roles are runtime configur
 skill metadata. Distributions include inert role templates under `assets/roles/`. Installing the
 skill must not silently modify a user's global Codex configuration.
 
+The role installer uses Python 3.11+'s standard-library TOML parser. On Python 3.10 and older,
+install `tomli` in the selected Python environment before running `check` or `install`.
+
 For the full model-tiered workflow, inspect the current state first:
 
 ```text
@@ -35,3 +38,13 @@ break-glass grant. Never copy secrets, local state, prompts, logs, or run ledger
 
 Release only when `assets/jd-release.json` records every gate as true: skill validation,
 contract tests, strict-config parsing, security scan, forward test, and distribution parity.
+
+For non-Codex clients, keep the canonical skill payload unchanged and use
+`scripts/install_harness_adapters.py`. It installs workspace-native discovery layouts for
+Antigravity, Cursor, Claude Code, Grok, Pi, and Cline, but does not install models, agents, hooks,
+MCP servers, credentials, or global configuration. See `references/harnesses.md` for capability
+negotiation and degraded-mode rules.
+
+Agent definitions are a separate opt-in surface. Use `scripts/create_agent_team.py` to validate
+and render the canonical `assets/agent-blueprints.json`. This separation prevents installing a
+skill from silently adding subagents, tools, models, or permission policy.
