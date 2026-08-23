@@ -1,0 +1,29 @@
+{
+  "name": "just-do-it",
+  "version": "1.5.0",
+  "description": "Portable PRD delivery with validated least-privilege agent teams, restart-safe continuity, and explicit forge gates.",
+  "author": {
+    "name": "adibirzu",
+    "url": "https://github.com/adibirzu"
+  },
+  "homepage": "https://github.com/adibirzu/adibirzu-plugins",
+  "repository": "https://github.com/adibirzu/adibirzu-plugins.git",
+  "license": "MIT",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Just Do It",
+    "shortDescription": "Delegate, reconcile, review, and deliver complex work safely.",
+    "longDescription": "JD turns one goal into PRDs and bounded model-tiered tasks, reconciles durable event checkpoints, enforces independent review and explicit forge authority, and offers a scoped, expiring break-glass capability grant.",
+    "developerName": "adibirzu",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/adibirzu/adibirzu-plugins",
+    "brandColor": "#C74634",
+    "defaultPrompt": [
+      "Use $jd to split this goal into PRDs, delegate it, review it, and continue until verified completion."
+    ]
+  }
+}
