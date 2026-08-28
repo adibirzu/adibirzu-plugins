@@ -39,6 +39,22 @@ Refresh the catalog and an installed OCI plugin after a release:
 /reload-plugins
 ```
 
+## MultiLLM Notes
+
+The `multillm` plugin now includes:
+
+- Claude and Codex usage guides for the same gateway and MCP toolset
+- richer usage math in the dashboard summaries, including per-request and per-session calculations
+- hourly usage checks in addition to 24h and 7d summaries
+- a portable `MULTILLM_HOME` setup so multiple devices can point at one synced data directory
+- built-in orchestration patterns so Claude/Codex can pull in council, second-opinion, and context-sharing help more consistently
+
+For multi-device usage consolidation, set `MULTILLM_HOME` to the same synced directory on each device before starting the gateway:
+
+```bash
+export MULTILLM_HOME="$HOME/Library/Mobile Documents/com~apple~CloudDocs/.multillm"
+```
+
 ## License
 
 MIT
