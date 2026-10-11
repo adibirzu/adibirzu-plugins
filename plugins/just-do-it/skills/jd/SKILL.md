@@ -1,6 +1,6 @@
 ---
 name: jd
-description: Turn one product or engineering goal into an ordered PRD program, delegate bounded tasks to model-tiered agents the current harness actually provides (Codex roles when available, otherwise Claude Code, Antigravity, Cursor, Grok, Pi, or Cline equivalents), enforce test-first implementation and independent review, and continue automatically until the agreed goal is complete or genuine user authority is required. Use for complex features, refactors, audits, migrations, or multi-phase project work where the user wants one initial prompt instead of repeatedly asking for the next task.
+description: Turn one product or engineering goal into an ordered PRD program, delegate bounded tasks to model-tiered agents the current harness actually provides (Codex roles when available, otherwise Claude Code, Antigravity, Cursor, Grok, Pi, or Cline equivalents), enforce test-first implementation and required independent review, and continue automatically until the agreed goal is complete or genuine user authority is required. Use for complex features, refactors, audits, migrations, or multi-phase project work where the user wants one initial prompt instead of repeatedly asking for the next task.
 ---
 
 # Just Do It
