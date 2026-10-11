@@ -9,7 +9,7 @@ RESULT
 prd: <id>
 task: <id>
 status: complete | blocked | needs_review | deferred | cancelled | superseded
-attempt: <current>/<maximum>
+attempt: <count; explicit user limit if any>
 blocker_fingerprint: <stable digest or none>
 files: <changed or inspected paths>
 tests: <commands and outcomes>
@@ -112,7 +112,7 @@ RECOVERY
 prd: <id>
 task: <id>
 stage: inspect | steer | relaunch | fail
-attempt: <current>/<maximum>
+attempt: <count; explicit user limit if any>
 last_progress_digest: <redacted digest>
 blocker_fingerprint: <stable digest>
 action: <bounded action taken>
