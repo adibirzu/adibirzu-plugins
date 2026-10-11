@@ -24,8 +24,9 @@ Use at most one pass through each stage per attempt and emit a `RECOVERY` packet
    note. Preserve its isolated worktree or leased changes.
 4. **Fail** after two relaunch failures or an explicit user attempt, time, or cost limit, recording
    evidence and escalating one consolidated question to the user when no safe alternative remains.
-   Apply the advisory default counter policy in [SKILL.md section 6](../SKILL.md#6-continue-autonomously)
-   and record the counter and rationale for continuing authorized local repair.
+
+Apply the [execution budget policy](../SKILL.md#6-continue-autonomously) when deciding whether
+to continue a local repair; record the counter and rationale.
 
 Low remaining context is not itself a failure; compact and continue. A repeated blocker without
 new evidence is a stall. Do not repeatedly send the same instruction.
