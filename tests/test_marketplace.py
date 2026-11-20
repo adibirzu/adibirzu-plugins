@@ -215,6 +215,21 @@ class SourceResolutionTest(unittest.TestCase):
                 self.assertEqual(root.name, plugin["name"])
                 self.assertTrue((root / ".claude-plugin" / "plugin.json").is_file())
 
+    def test_local_plugin_links_point_at_this_repository(self) -> None:
+        # A local plugin has no other public home. A link to a separate
+        # repository is a dead link for users when that repository is private.
+        prefix = "https://github.com/adibirzu/adibirzu-plugins"
+        for plugin, root in local_plugins():
+            manifest = load_json(root / ".claude-plugin" / "plugin.json")
+            links = {
+                "marketplace homepage": plugin["homepage"],
+                "plugin homepage": manifest.get("homepage", prefix),
+                "plugin repository": manifest.get("repository", prefix),
+            }
+            for label, url in links.items():
+                with self.subTest(plugin=plugin["name"], link=label):
+                    self.assertTrue(url.startswith(prefix), url)
+
     def test_remote_sources_are_owner_https_git_urls(self) -> None:
         pattern = re.compile(r"^https://github\.com/adibirzu/[A-Za-z0-9._-]+\.git$")
         remote = [p for p in marketplace_plugins() if not isinstance(p["source"], str)]

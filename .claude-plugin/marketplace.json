@@ -47,7 +47,7 @@
       },
       "source": "./plugins/multillm",
       "category": "development",
-      "homepage": "https://github.com/adibirzu/multillm"
+      "homepage": "https://github.com/adibirzu/adibirzu-plugins/tree/main/plugins/multillm"
     },
     {
       "name": "oci-administrator",
