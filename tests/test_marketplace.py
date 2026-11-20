@@ -47,16 +47,9 @@ README_ROW = re.compile(
 EM_DASH = chr(0x2014)
 BANNED_WORD = "cap" + "tain"
 
-# Content this change set does not own: the bodies of the two older plugins
-# stay untouched. Their manifests are still checked.
-HYGIENE_EXEMPT = (
-    "plugins/just-do-it/skills/",
-    "plugins/multillm/agents/",
-    "plugins/multillm/commands/",
-    "plugins/multillm/hooks/",
-    "plugins/multillm/skills/",
-    "plugins/multillm/AGENTS.md",
-)
+# Content this change set does not own: the skills of the older just-do-it
+# plugin stay untouched. Its manifests are still checked.
+HYGIENE_EXEMPT = ("plugins/just-do-it/skills/",)
 SKIP_DIRS = {".git", ".ruff_cache", ".venv", "__pycache__", "graphify-out", "node_modules", "sbom"}
 SKIP_FILES = {".DS_Store", "firebase-debug.log"}
 TEXT_SUFFIXES = {".md", ".json", ".yml", ".yaml", ".py", ".txt", ".in", ".toml", ".sh"}
@@ -243,13 +236,36 @@ class MarketplaceSchemaTest(unittest.TestCase):
         self.assertEqual(versions.get("rlm"), "4.0.0")
         self.assertEqual(versions.get("poteto-workflow"), "1.0.0")
         self.assertEqual(versions.get("coding-cicd-hardening"), "1.0.0")
-        for kept in ("prod-ready", "multillm", "oci-administrator", "just-do-it"):
+        for kept in ("prod-ready", "oci-administrator", "just-do-it"):
             self.assertIn(kept, versions)
+
+
+class RemovedPluginTest(unittest.TestCase):
+    """multillm failed the scan and cannot run for public users, so it is not published."""
+
+    REMOVED = "multillm"
+
+    def test_removed_plugin_directory_is_gone(self) -> None:
+        self.assertFalse((REPO / "plugins" / self.REMOVED).exists())
+
+    def test_removed_plugin_is_absent_from_the_catalog_and_scan_evidence(self) -> None:
+        self.assertNotIn(self.REMOVED, {p["name"] for p in marketplace_plugins()})
+        self.assertNotIn(self.REMOVED, load_json(SCAN_STATUS)["plugins"])
+
+    def test_no_do_not_install_verdict_is_published_anywhere(self) -> None:
+        verdicts = [r["verdict"] for r in load_json(SCAN_STATUS)["plugins"].values()]
+        self.assertNotIn("DO_NOT_INSTALL", verdicts)
+        self.assertNotIn("DO_NOT_INSTALL", read(SCAN_STATUS))
+        self.assertNotIn("DO_NOT_INSTALL", read(README))
+
+    def test_removed_plugin_is_not_advertised_in_the_readme(self) -> None:
+        self.assertNotIn(f"/plugin install {self.REMOVED}@", read(README))
+        self.assertNotIn("plugins/" + self.REMOVED, read(README))
 
 
 class SourceResolutionTest(unittest.TestCase):
     def test_local_sources_resolve_inside_the_repo(self) -> None:
-        self.assertGreaterEqual(len(local_plugins()), 4)
+        self.assertGreaterEqual(len(local_plugins()), 3)
         for plugin, root in local_plugins():
             with self.subTest(plugin=plugin["name"]):
                 self.assertTrue(plugin["source"].startswith("./plugins/"))
@@ -337,7 +353,7 @@ class VersionParityTest(unittest.TestCase):
 class SkillFrontmatterTest(unittest.TestCase):
     def test_every_local_skill_follows_agentskills_frontmatter(self) -> None:
         skills = skill_files()
-        self.assertGreaterEqual(len(skills), 5)
+        self.assertGreaterEqual(len(skills), 3)
         for path in skills:
             with self.subTest(skill=path.relative_to(REPO).as_posix()):
                 fields = frontmatter(path)
@@ -580,12 +596,12 @@ class RepositoryBaselineTest(unittest.TestCase):
         }
         self.assertEqual(rows, expected)
 
-    def test_a_plugin_that_fails_the_scan_is_only_listed_with_a_warning(self) -> None:
+    def test_a_plugin_that_fails_the_scan_is_not_published(self) -> None:
         entries = {plugin["name"]: plugin for plugin in marketplace_plugins()}
         for name, record in self.scan_status()["plugins"].items():
             with self.subTest(plugin=name, verdict=record["verdict"]):
-                warned = "SECURITY.md before installing" in entries[name]["description"]
-                self.assertEqual(warned, record["verdict"] == "DO_NOT_INSTALL")
+                self.assertNotEqual(record["verdict"], "DO_NOT_INSTALL")
+                self.assertNotIn("SECURITY.md before installing", entries[name]["description"])
         self.assertIn("multillm", read(REPO / "SECURITY.md").split("## Known scan findings", 1)[1])
 
     def test_contributing_carries_the_pr_checklist(self) -> None:

@@ -82,7 +82,7 @@ Copy this into the pull request description and tick each item.
 - [ ] `gitleaks detect --source . --redact --no-banner -v --log-opts="--full-history --all --diff-merges=first-parent"` is clean
 - [ ] `skillspector scan <plugin-dir> --no-llm --recursive` and `skillspector scan <plugin-dir>/skills --no-llm --recursive` both ran
 - [ ] `python3 .github/ci/record_scan_status.py` was rerun after the last change under `plugins/`, and the "Plugin scan status" table in README.md matches `.github/skill-scan/status.json`
-- [ ] No plugin is added or kept with a DO_NOT_INSTALL verdict unless its catalog description carries the warning the tests require
+- [ ] No plugin is added or kept with a DO_NOT_INSTALL verdict: a plugin that fails the scan is not published
 - [ ] No secrets, private hostnames, internal addresses or personal data in the diff
 - [ ] Versions agree across marketplace.json, plugin.json and the README table
 - [ ] Remote plugin entries were verified against their repository (output pasted)

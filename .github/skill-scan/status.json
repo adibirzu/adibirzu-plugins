@@ -4,13 +4,6 @@
   "mode": "--no-llm --recursive, whole plugin bundle",
   "scanned": "2026-11-20",
   "plugins": {
-    "multillm": {
-      "verdict": "DO_NOT_INSTALL",
-      "score": 100,
-      "findings": 37,
-      "coverage": "partial",
-      "tree_sha256": "60664e440ebb84c9664bb5ce3cb62488aa531bcdeeb850f8737c46c0acd120c7"
-    },
     "just-do-it": {
       "verdict": "CAUTION",
       "score": 44,

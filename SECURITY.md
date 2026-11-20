@@ -53,36 +53,13 @@ this marketplace or another:
 ## Known scan findings
 
 The scan verdict for every local plugin is published in the "Plugin scan
-status" table in [README.md](README.md). One plugin currently fails.
+status" table in [README.md](README.md). No local plugin currently fails the
+scan.
 
-### multillm: DO_NOT_INSTALL
-
-SkillSpector 2.12.0 with `--no-llm` rates the `multillm` bundle
-**DO_NOT_INSTALL**, risk score 100, with 37 findings: 20 external script
-fetching, 11 external transmission, 3 session persistence, 1 credential
-access, 1 cross-context output and 1 bundled hook. Scanned on 2026-11-20.
-
-What that means in practice:
-
-- Installing it registers a `SessionStart` hook. On every session start the
-  hook runs `hooks/start-gateway.sh`, which may create a Python virtual
-  environment, run `pip install` with no version or hash pins, and start a
-  background process that keeps running after the session ends.
-- A second hook, `hooks/check-update.sh`, runs at session start and calls
-  the GitHub API to look for a newer version.
-- The gateway reads provider API keys from your environment and from a
-  local `.env` file, and sends prompts to whichever model backends you
-  configure. That is its purpose, and it is also why the scanner reports
-  credential access and external transmission.
-- The gateway package itself is not in this repository. Without it the
-  hook cannot start anything.
-
-The plugin stays listed because existing users depend on it, and its catalog
-description carries a warning that points here. Treat it as software you
-must read before you run. Do not install it on a machine that holds
-credentials you are not prepared to expose to it. A plugin that fails the
-scan may only stay in the catalog with that warning, and the tests enforce
-it.
+A plugin that scans DO_NOT_INSTALL is not published in this catalog. The
+`multillm` plugin was removed on that basis because it also depended on a
+gateway package that is not in this repository, so it could not run for
+public users.
 
 `just-do-it` is rated CAUTION, score 44, with 5 findings, the most serious
 being access to agent configuration directories. That is expected for a tool
