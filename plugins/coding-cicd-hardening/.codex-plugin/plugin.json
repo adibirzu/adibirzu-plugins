@@ -1,0 +1,29 @@
+{
+  "name": "coding-cicd-hardening",
+  "version": "1.0.0",
+  "description": "Secure coding and CI/CD baseline with a standard-library workflow linter and a CycloneDX 1.7 and SPDX 2.3 SBOM generator.",
+  "author": {
+    "name": "adibirzu",
+    "url": "https://github.com/adibirzu"
+  },
+  "homepage": "https://github.com/adibirzu/adibirzu-plugins/tree/main/plugins/coding-cicd-hardening",
+  "repository": "https://github.com/adibirzu/adibirzu-plugins.git",
+  "license": "MIT",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Coding and CI/CD Hardening",
+    "shortDescription": "Harden workflows, pin the supply chain, ship SBOMs.",
+    "longDescription": "Applies a checked baseline to a repository: actions pinned to full commit SHAs, OIDC in place of static cloud keys, empty default token permissions, no credential persistence, no pull_request_target, secret scanning, SAST, dependency review, grouped Dependabot updates, tests that cannot reach production by default, and CycloneDX 1.7 plus SPDX 2.3 SBOMs. Ships a workflow linter and an SBOM generator that need only the Python standard library.",
+    "developerName": "adibirzu",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/adibirzu/adibirzu-plugins",
+    "brandColor": "#C74634",
+    "defaultPrompt": [
+      "Use $secure-coding-cicd to audit this repository's workflows and bring them up to the hardened baseline."
+    ]
+  }
+}
