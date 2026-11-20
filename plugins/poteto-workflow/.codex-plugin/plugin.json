@@ -1,0 +1,29 @@
+{
+  "name": "poteto-workflow",
+  "version": "1.0.0",
+  "description": "Gated engineering workflow with four stages and seven crew gates for test-first, independently reviewed, secret-scanned delivery.",
+  "author": {
+    "name": "adibirzu",
+    "url": "https://github.com/adibirzu"
+  },
+  "homepage": "https://github.com/adibirzu/adibirzu-plugins/tree/main/plugins/poteto-workflow",
+  "repository": "https://github.com/adibirzu/adibirzu-plugins.git",
+  "license": "MIT",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Poteto Workflow",
+    "shortDescription": "Interrogate, arena, swarm, show your work, under hard crew gates.",
+    "longDescription": "Runs a change through four stages (interrogate the premise, run an arena on real forks, swarm independent units, show the evidence) and holds it to seven crew gates: a failing test before the fix, review by a different model family, gitleaks before every commit and pull request, the full suite green, owner approval for merge, deploy and force-push, no AI co-author trailers, and tiered model routing.",
+    "developerName": "adibirzu",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/adibirzu/adibirzu-plugins",
+    "brandColor": "#C74634",
+    "defaultPrompt": [
+      "Use $poteto-workflow to deliver this change test-first, with an independent review and a secret scan before the pull request."
+    ]
+  }
+}

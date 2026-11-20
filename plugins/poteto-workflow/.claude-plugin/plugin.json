@@ -1,0 +1,13 @@
+{
+  "name": "poteto-workflow",
+  "version": "1.0.0",
+  "description": "Gated engineering workflow: interrogate, arena, swarm and show-me-your-work, held to seven crew gates (failing test first, cross-family review, gitleaks scans, full suite green, owner-approved merges, no AI co-author trailers, tiered model routing).",
+  "author": {
+    "name": "adibirzu",
+    "url": "https://github.com/adibirzu"
+  },
+  "homepage": "https://github.com/adibirzu/adibirzu-plugins/tree/main/plugins/poteto-workflow",
+  "repository": "https://github.com/adibirzu/adibirzu-plugins.git",
+  "license": "MIT",
+  "keywords": ["workflow", "tdd", "code-review", "secret-scanning", "multi-agent"]
+}
