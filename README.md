@@ -1,6 +1,6 @@
 # adibirzu-plugins
 
-Claude Code plugin marketplace by [adibirzu](https://github.com/adibirzu) for production engineering, gated delivery workflows, CI/CD hardening, multi-model routing, and OCI cloud operations.
+Claude Code plugin marketplace by [adibirzu](https://github.com/adibirzu) for production engineering, gated delivery workflows, CI/CD hardening, and OCI cloud operations.
 
 ## Plugins
 
@@ -8,7 +8,6 @@ Claude Code plugin marketplace by [adibirzu](https://github.com/adibirzu) for pr
 |--------|-------------|---------|
 | [prod-ready](https://github.com/adibirzu/claude-prod-ready-plugin) | Pre-production security audit, dependency hardening, CI/CD validation, and Docker readiness checks | 1.0.0 |
 | [rlm](https://github.com/adibirzu/rlm-plugin) | Budgeted recursive analysis with evidence ledgers and selective verification | 4.0.0 |
-| [multillm](plugins/multillm) | Multi-LLM gateway with model discovery, session tracking, usage controls, fusion, and cross-LLM memory. Fails the skill scan, see [scan status](#plugin-scan-status) | 0.9.0 |
 | [oci-administrator](https://github.com/adibirzu/oci-skills) | Safety-first OCI administration, Terraform, platform engineering, storage, disaster recovery, Bastion, database, and landing-zone workflows | 2.0.0-rc.3 |
 | [just-do-it](plugins/just-do-it) | Portable PRD delivery and clean least-privilege agent-team generation across major coding harnesses | 1.5.0 |
 | [oci-observability-tools](https://github.com/adibirzu/oci-observability-tools) | Offline OCI Observability and Management skills and validators | 0.1.0 |
@@ -28,7 +27,6 @@ Then install individual plugins:
 ```bash
 /plugin install prod-ready@adibirzu-plugins
 /plugin install rlm@adibirzu-plugins
-/plugin install multillm@adibirzu-plugins
 /plugin install oci-administrator@adibirzu-plugins
 /plugin install just-do-it@adibirzu-plugins
 /plugin install oci-observability-tools@adibirzu-plugins
@@ -54,11 +52,8 @@ Every local plugin is scanned with SkillSpector 2.12.0, `--no-llm`, as a whole b
 | `poteto-workflow` | SAFE | 0 | 0 | complete | Instructions only, no hooks or scripts |
 | `coding-cicd-hardening` | SAFE | 0 | 0 | complete | Two standard-library scripts that read files and write SBOMs |
 | `just-do-it` | CAUTION | 44 | 5 | complete | Writes agent team configurations, so it touches agent config directories |
-| `multillm` | DO_NOT_INSTALL | 100 | 37 | partial | A `SessionStart` hook installs packages with pip and starts a background gateway that reads provider API keys. Coverage is partial: the scanner could not fully inspect every file, so the real picture may be worse |
 
-**`multillm` fails the scan.** Read [SECURITY.md](SECURITY.md#known-scan-findings) before you install it. It stays listed for existing users, with a warning in its catalog description.
-
-The verdicts are recorded in [.github/skill-scan/status.json](.github/skill-scan/status.json), each one pinned to a digest of the plugin directory it was taken from. The tests fail when a plugin changes without a new scan, when this table and that file disagree, and when a DO_NOT_INSTALL plugin is listed without the warning in its description. A new plugin is not accepted with that verdict at all. Remote plugins are scanned by their own repositories, not here.
+The verdicts are recorded in [.github/skill-scan/status.json](.github/skill-scan/status.json), each one pinned to a digest of the plugin directory it was taken from. The tests fail when a plugin changes without a new scan, when this table and that file disagree, and when any local plugin carries a failing verdict. A plugin that fails the scan is not published. Remote plugins are scanned by their own repositories, not here.
 
 Reproduce a verdict, or record a new one after changing a plugin:
 
@@ -77,7 +72,7 @@ flowchart LR
 
     subgraph repo["This repository: reviewed and gated by CI"]
         manifest
-        local["Local plugins in plugins/<br/>multillm, just-do-it,<br/>poteto-workflow, coding-cicd-hardening"]
+        local["Local plugins in plugins/<br/>just-do-it,<br/>poteto-workflow, coding-cicd-hardening"]
         ci["CI gates<br/>unit tests, workflow and skill lint,<br/>ruff, bandit, gitleaks,<br/>dependency review, SBOM validation,<br/>scan status gate"]
         manifest -->|"relative path"| local
         ci -.->|"must pass before merge"| manifest
@@ -103,7 +98,7 @@ flowchart LR
 | Contributor to this repository | Pull requests | CI with a read-only token, no `pull_request_target`, secret scan on every commit, owner approval to merge |
 | This repository to a remote plugin | A git URL in the manifest | The URL must be a public `adibirzu` repository with a valid `.claude-plugin/plugin.json`. Its content is not reviewed here and is not pinned to a commit, so a remote plugin is only as trustworthy as its own repository |
 | CI to third-party actions and tools | Code that runs with the job token | Actions pinned to 40-character commit SHAs, tools installed with pip hash checking, gitleaks verified by checksum, default token permissions empty |
-| Marketplace to your machine | Skills, commands, hooks and scripts that run with your agent's access | Read a plugin before you install it and check its row in the scan status table. `multillm` ships hooks that install packages and start a local gateway, and fails the scan |
+| Marketplace to your machine | Skills, commands, hooks and scripts that run with your agent's access | Read a plugin before you install it and check its row in the scan status table. |
 
 The manifest is the only thing Claude Code reads from this repository to build the catalog. Nothing outside `.claude-plugin/` and `plugins/` is installed by any plugin, and only catalog content is allowed at the top level of this repository.
 
@@ -134,22 +129,6 @@ python3 plugins/coding-cicd-hardening/scripts/check_workflows.py .
 ```
 
 Both need only the Python standard library. See [CONTRIBUTING.md](CONTRIBUTING.md) for the pull request checklist and [SECURITY.md](SECURITY.md) to report a vulnerability.
-
-## MultiLLM Notes
-
-The `multillm` plugin now includes:
-
-- Claude and Codex usage guides for the same gateway and MCP toolset
-- richer usage math in the dashboard summaries, including per-request and per-session calculations
-- hourly usage checks in addition to 24h and 7d summaries
-- a portable `MULTILLM_HOME` setup so multiple devices can point at one synced data directory
-- built-in orchestration patterns so Claude/Codex can pull in council, second-opinion, and context-sharing help more consistently
-
-For multi-device usage consolidation, set `MULTILLM_HOME` to the same synced directory on each device before starting the gateway:
-
-```bash
-export MULTILLM_HOME="$HOME/Library/Mobile Documents/com~apple~CloudDocs/.multillm"
-```
 
 ## License
 
