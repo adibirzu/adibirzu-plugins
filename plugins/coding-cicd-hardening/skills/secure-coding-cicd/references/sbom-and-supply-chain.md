@@ -59,8 +59,13 @@ It writes `sbom/marketplace.cdx.json` and `sbom/marketplace.spdx.json`.
 - Local plugins carry a `marketplace:tree-sha256` property: a digest over
   every file path and content in the plugin directory. It changes when any
   file changes.
-- Remote plugins carry their repository URL and a `pkg:github/` purl.
+- Remote plugins keep the identity their source declares: `github`, `url`
+  and `git-subdir` sources get a repository URL and a `pkg:github/` purl
+  pinned to the declared commit when there is one, `npm` sources get a
+  `pkg:npm/` purl, and `archive` sources get their URL and checksum.
 - Pinned actions carry the commit SHA as their version.
+- Job, service and step container images are listed as container
+  components with their tag or digest.
 
 Output is reproducible. Set `SOURCE_DATE_EPOCH` and the same tree gives
 byte-identical files, so a consumer can regenerate and compare:
@@ -130,14 +135,27 @@ jobs:
 ```
 
 Attest only in the job that builds the release artifact, and grant the two
-write scopes to that job alone. A consumer verifies with:
+write scopes to that job alone.
+
+A consumer has to name the predicate to verify the SBOM. Without
+`--predicate-type` the command checks build provenance instead, and passes
+or fails for the wrong reason:
 
 ```bash
+# the SBOM attestation
+gh attestation verify <artifact> --repo <owner>/<repo> \
+  --predicate-type https://cyclonedx.org/bom
+
+# an SPDX SBOM uses its own predicate
+gh attestation verify <artifact> --repo <owner>/<repo> \
+  --predicate-type https://spdx.dev/Document/v2.3
+
+# build provenance, a separate attestation
 gh attestation verify <artifact> --repo <owner>/<repo>
 ```
 
-Add build provenance the same way so the consumer can also check which
-source commit and workflow produced the artifact.
+Add build provenance with `actions/attest-build-provenance` so the consumer
+can also check which source commit and workflow produced the artifact.
 
 ## 7. Consuming an SBOM
 

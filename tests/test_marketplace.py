@@ -39,11 +39,9 @@ README_ROW = re.compile(
 EM_DASH = chr(0x2014)
 BANNED_WORD = "cap" + "tain"
 
-# Content this change set does not own. src/aetherops is frozen pending the
-# owner decision recorded in SECURITY.md. The bodies of the two older plugins
+# Content this change set does not own: the bodies of the two older plugins
 # stay untouched. Their manifests are still checked.
 HYGIENE_EXEMPT = (
-    "src/",
     "plugins/just-do-it/skills/",
     "plugins/multillm/agents/",
     "plugins/multillm/commands/",
@@ -152,6 +150,34 @@ def frontmatter(path: Path) -> dict[str, str]:
     return {}
 
 
+def linter():
+    spec = importlib.util.spec_from_file_location("check_workflows", LINTER)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def workflow_values(path: Path, key: str) -> list[str]:
+    """Decoded values of every `key` in a workflow, read structurally."""
+    nodes, problems = linter().parse_workflow(read(path))
+    assert problems == [], problems
+    return [node.value for node in nodes if node.path and node.path[-1] == key and node.value]
+
+
+# Each edit removes one control from a real workflow. The linter must notice.
+MUTATIONS = {
+    "unpinned-action": lambda text: re.sub(r"(actions/checkout)@[0-9a-f]{40}", r"\1@v7", text, count=1),
+    "checkout-persist-credentials": lambda text: text.replace("          persist-credentials: false\n", "", 1),
+    "missing-top-level-permissions": lambda text: text.replace("\npermissions: {}\n", "\n", 1),
+    "broad-permissions": lambda text: text.replace("\npermissions: {}\n", "\npermissions: write-all\n", 1),
+    "pull-request-target": lambda text: text.replace("\n  pull_request:\n", "\n  pull_request_target:\n", 1),
+    "script-injection": lambda text: text.replace(
+        "python3 -m pip install", "echo ${{ github.event.pull_request.title }} && python3 -m pip install", 1
+    ),
+}
+
+
 def workflow_files() -> list[Path]:
     if not WORKFLOWS.is_dir():
         return []
@@ -184,7 +210,7 @@ class MarketplaceSchemaTest(unittest.TestCase):
                 self.assertRegex(plugin["name"], KEBAB)
                 self.assertRegex(plugin["version"], SEMVER)
                 self.assertTrue(plugin["description"].strip())
-                self.assertLessEqual(len(plugin["description"]), 400)
+                self.assertLessEqual(len(plugin["description"]), 480)
                 self.assertTrue(plugin["author"]["name"].strip())
                 self.assertIn(
                     plugin["category"], {"development", "security", "devops", "productivity"}
@@ -392,55 +418,49 @@ class WorkflowHardeningTest(unittest.TestCase):
     def test_every_action_is_pinned_to_a_full_commit_sha(self) -> None:
         seen = 0
         for path in workflow_files():
-            for ref in uses_refs(path):
+            for ref in workflow_values(path, "uses"):
                 seen += 1
                 with self.subTest(workflow=path.name, uses=ref):
                     self.assertRegex(ref, FULL_SHA_USE)
         self.assertGreaterEqual(seen, 4)
 
-    def test_top_level_permissions_are_least_privilege(self) -> None:
+    def test_real_workflows_are_clean_and_every_control_is_enforced(self) -> None:
+        lint = linter().lint_workflow
         for path in workflow_files():
-            with self.subTest(workflow=path.name):
-                lines = read(path).splitlines()
-                top = [line for line in lines if re.match(r"^permissions:", line)]
-                self.assertEqual(len(top), 1, "exactly one top-level permissions key")
-                self.assertIn(
-                    top[0].split(":", 1)[1].strip(), {"{}", "read-all"}
-                )
-                self.assertNotIn("write-all", read(path))
+            original = read(path)
+            self.assertEqual([f.render() for f in lint(original, path.name)], [])
+            for rule, mutate in MUTATIONS.items():
+                with self.subTest(workflow=path.name, removed=rule):
+                    mutated = mutate(original)
+                    self.assertNotEqual(mutated, original, "mutation did not apply")
+                    self.assertIn(rule, {f.rule for f in lint(mutated, path.name)})
 
-    def test_no_pull_request_target_trigger(self) -> None:
-        for path in workflow_files():
-            with self.subTest(workflow=path.name):
-                code = "\n".join(
-                    line.split("#", 1)[0] for line in read(path).splitlines()
-                )
-                self.assertNotIn("pull_request_target", code)
+    def test_ci_runs_tests_linter_and_a_merge_aware_secret_scan(self) -> None:
+        runs = "\n".join(workflow_values(WORKFLOWS / "ci.yml", "run"))
+        self.assertIn("python3 -m unittest discover -s tests -v", runs)
+        self.assertIn("plugins/coding-cicd-hardening/scripts/check_workflows.py .", runs)
+        self.assertIn("sha256sum --check --strict", runs)
+        scan = [line for line in runs.splitlines() if "gitleaks\" detect" in line or "gitleaks detect" in line]
+        self.assertEqual(len(scan), 1)
+        self.assertIn("--redact", scan[0])
+        # Without merge diffs a secret added while resolving a conflict is never scanned.
+        self.assertIn("--diff-merges=first-parent", runs)
 
-    def test_checkout_never_persists_credentials(self) -> None:
-        for path in workflow_files():
-            text = read(path)
-            with self.subTest(workflow=path.name):
-                self.assertEqual(
-                    text.count("actions/checkout@"),
-                    text.count("persist-credentials: false"),
-                )
-
-    def test_ci_runs_tests_linter_and_secret_scan(self) -> None:
-        text = read(WORKFLOWS / "ci.yml")
-        self.assertIn("python3 -m unittest discover -s tests -v", text)
-        self.assertIn("plugins/coding-cicd-hardening/scripts/check_workflows.py .", text)
-        self.assertIn("gitleaks", text)
-        self.assertIn("sha256sum", text)
-
-    def test_sbom_workflow_emits_and_validates_both_formats(self) -> None:
-        text = read(WORKFLOWS / "sbom.yml")
-        self.assertIn("--spec-version 1.7", text)
-        self.assertIn("SPDX-2.3", text)
-        self.assertIn("actions/upload-artifact@", text)
-        for trigger in ("push:", "pull_request:", "release:"):
-            with self.subTest(trigger=trigger):
-                self.assertIn(trigger, text)
+    def test_sbom_workflow_generates_validates_and_uploads_both_formats(self) -> None:
+        path = WORKFLOWS / "sbom.yml"
+        runs = workflow_values(path, "run")
+        generate = [run for run in runs if "generate_sbom.py" in run]
+        validate = [run for run in runs if "validate_sbom.py" in run]
+        self.assertEqual(len(generate), 1)
+        self.assertEqual(len(validate), 1)
+        self.assertIn("--spec-version 1.7", generate[0])
+        self.assertIn("sbom/marketplace.cdx.json", validate[0])
+        self.assertIn("sbom/marketplace.spdx.json", validate[0])
+        self.assertTrue(any(ref.startswith("actions/upload-artifact@") for ref in workflow_values(path, "uses")))
+        self.assertIn("sbom/", workflow_values(path, "path"))
+        nodes, _ = linter().parse_workflow(read(path))
+        triggers = {node.path[1] for node in nodes if len(node.path) >= 2 and node.path[0] == "on"}
+        self.assertLessEqual({"push", "pull_request", "release"}, triggers)
 
     def test_ci_tool_requirements_are_hash_pinned(self) -> None:
         text = read(REPO / ".github" / "ci" / "requirements.txt")
@@ -452,11 +472,7 @@ class WorkflowHardeningTest(unittest.TestCase):
                         self.assertIn("--require-hashes", line)
 
     def test_repo_passes_its_own_linter(self) -> None:
-        spec = importlib.util.spec_from_file_location("check_workflows", LINTER)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
-        findings = module.lint_tree(REPO)
+        findings = linter().lint_tree(REPO)
         self.assertEqual([finding.render() for finding in findings], [])
 
 
@@ -468,10 +484,43 @@ class RepositoryBaselineTest(unittest.TestCase):
         self.assertIn('package-ecosystem: "github-actions"', text)
         self.assertEqual(text.count("groups:"), 2)
 
-    def test_security_policy_reports_privately_and_flags_frozen_tree(self) -> None:
+    def test_security_policy_reports_privately(self) -> None:
         text = read(REPO / "SECURITY.md")
         self.assertIn("security/advisories/new", text)
-        self.assertIn("src/aetherops", text)
+
+    def test_repository_holds_only_marketplace_content(self) -> None:
+        # Anything else at the top level is not a plugin and does not belong
+        # in a public catalog. This is the guard for stray source trees.
+        allowed = {
+            ".claude-plugin",
+            ".github",
+            ".gitignore",
+            "CONTRIBUTING.md",
+            "LICENSE",
+            "README.md",
+            "SECURITY.md",
+            "plugins",
+            "ruff.toml",
+            "tests",
+        }
+        present = {p.name for p in REPO.iterdir() if p.name not in SKIP_DIRS | SKIP_FILES}
+        self.assertEqual(present - allowed, set())
+
+    def test_plugin_scan_status_is_published_and_gates_the_catalog(self) -> None:
+        text = read(README)
+        self.assertIn("## Plugin scan status", text)
+        section = text.split("## Plugin scan status", 1)[1].split("\n## ", 1)[0]
+        verdicts = dict(re.findall(r"^\| `([a-z0-9-]+)` \| (SAFE|CAUTION|DO_NOT_INSTALL) \|", section, re.M))
+        self.assertEqual(set(verdicts), {plugin["name"] for plugin, _ in local_plugins()})
+        self.assertEqual(verdicts["poteto-workflow"], "SAFE")
+        self.assertEqual(verdicts["coding-cicd-hardening"], "SAFE")
+        entries = {plugin["name"]: plugin for plugin in marketplace_plugins()}
+        for name, verdict in verdicts.items():
+            with self.subTest(plugin=name, verdict=verdict):
+                warned = "SECURITY.md before installing" in entries[name]["description"]
+                # A plugin that fails the scan may only stay listed with a visible warning.
+                self.assertEqual(warned, verdict == "DO_NOT_INSTALL")
+        self.assertIn("multillm", read(REPO / "SECURITY.md").split("## Known scan findings", 1)[1])
 
     def test_contributing_carries_the_pr_checklist(self) -> None:
         text = read(REPO / "CONTRIBUTING.md")
@@ -500,10 +549,8 @@ class RepositoryBaselineTest(unittest.TestCase):
             with self.subTest(plugin=name):
                 self.assertIn("MIT License", read(REPO / "plugins" / name / "LICENSE"))
 
-    def test_readme_excludes_frozen_tree_from_the_license(self) -> None:
-        section = read(README).split("## License", 1)[1]
-        self.assertIn("src/aetherops", section)
-        self.assertIn("no license is granted", section.lower())
+    def test_repository_license_is_mit(self) -> None:
+        self.assertIn("MIT License", read(REPO / "LICENSE"))
 
     def test_plugins_ship_no_python_bytecode(self) -> None:
         # Bytecode is unreviewable and skill scanners block it. Loading the

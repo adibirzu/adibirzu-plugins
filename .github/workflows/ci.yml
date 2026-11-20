@@ -79,9 +79,13 @@ jobs:
           echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum --check --strict
           tar --extract --gzip --file gitleaks.tar.gz --directory "${RUNNER_TEMP}" gitleaks
           rm gitleaks.tar.gz
-      - name: Scan every commit
+      - name: Scan every commit, including merge resolutions
+        # By default gitleaks reads `git log -p`, which shows no diff for a
+        # merge commit. A secret typed in while resolving a conflict would be
+        # skipped. --diff-merges=first-parent makes those changes visible.
         run: |
-          "${RUNNER_TEMP}/gitleaks" detect --source . --redact --no-banner --verbose
+          "${RUNNER_TEMP}/gitleaks" detect --source . --redact --no-banner --verbose \
+            --log-opts="--full-history --all --diff-merges=first-parent"
 
   dependency-review:
     name: Dependency review

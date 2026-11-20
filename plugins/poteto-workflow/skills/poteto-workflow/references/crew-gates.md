@@ -75,11 +75,17 @@ deletes it. The only cheap moment to catch it is before the commit exists.
 **Proof.**
 
 ```bash
-gitleaks protect --staged --redact --no-banner     # before every commit
-gitleaks detect --source . --redact --no-banner -v # before every pull request
+# before every commit
+gitleaks protect --staged --redact --no-banner
+
+# before every pull request
+gitleaks detect --source . --redact --no-banner -v \
+  --log-opts="--full-history --all --diff-merges=first-parent"
 ```
 
 Always pass `--redact` so a finding never prints the secret into a log.
+Keep the `--log-opts` line. Without it gitleaks shows no diff for merge
+commits, so a secret added while resolving a conflict is never scanned.
 
 **On failure.** Stop. Do not commit, and do not push. Unstage the file and
 remove the value. If the secret already reached a remote, treat it as leaked:

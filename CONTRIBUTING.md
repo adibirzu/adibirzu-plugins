@@ -79,8 +79,9 @@ Copy this into the pull request description and tick each item.
 - [ ] `python3 -m unittest discover -s tests -v` passes
 - [ ] `python3 plugins/coding-cicd-hardening/scripts/check_workflows.py .` reports 0 findings
 - [ ] `gitleaks protect --staged --redact --no-banner` was clean on every commit
-- [ ] `gitleaks detect --source . --redact --no-banner -v` is clean
-- [ ] New or changed skills pass `skillspector scan <plugin-dir> --no-llm --recursive`, or the finding is explained
+- [ ] `gitleaks detect --source . --redact --no-banner -v --log-opts="--full-history --all --diff-merges=first-parent"` is clean
+- [ ] `skillspector scan <plugin-dir> --no-llm --recursive` and `skillspector scan <plugin-dir>/skills --no-llm --recursive` both ran, and the "Plugin scan status" table in README.md shows the result
+- [ ] No plugin is added or kept with a DO_NOT_INSTALL verdict unless its catalog description carries the warning the tests require
 - [ ] No secrets, private hostnames, internal addresses or personal data in the diff
 - [ ] Versions agree across marketplace.json, plugin.json and the README table
 - [ ] Remote plugin entries were verified against their repository (output pasted)
@@ -90,10 +91,13 @@ Copy this into the pull request description and tick each item.
 - [ ] Commits carry the human author only, with no AI co-author trailers
 ```
 
+## What does not belong here
+
+Only the catalog, the plugins, their tests and the CI files live in this
+repository. Do not add application source trees, build output, compiled
+bytecode, logs or data. A test fails on any new top-level entry.
+
 ## Security
 
 Never report a vulnerability in a public issue or pull request. See
-[SECURITY.md](SECURITY.md).
-
-Changes under `src/aetherops/` are not accepted. See the notice in
 [SECURITY.md](SECURITY.md).

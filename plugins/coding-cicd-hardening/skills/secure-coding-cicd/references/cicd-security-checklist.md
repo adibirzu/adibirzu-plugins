@@ -24,7 +24,8 @@ by `scripts/check_workflows.py`. The rest need the commands shown.
 ## 1. Pin every action to a 40-character commit SHA
 
 **Rule.** Every `uses:` names a full commit SHA. Keep the release tag in a
-trailing comment so people and update bots can read it.
+trailing comment so people and update bots can read it. Every container
+image, on a job, a service or a step, names a sha256 digest.
 
 **Why.** A tag such as `@v4` is a pointer its owner can move. In March 2025
 the tags of a widely used action were repointed to a commit that printed CI
@@ -43,10 +44,10 @@ gh api repos/actions/checkout/commits/v7.0.1 --jq .sha
 ```
 
 The same holds for reusable workflows and container images. Pin images by
-digest: `docker://image@sha256:<64 hex>`.
+digest: `image@sha256:<64 hex>`.
 
 **Verify.** `python3 scripts/check_workflows.py .` reports no
-`unpinned-action`.
+`unpinned-action` and no `unpinned-image`.
 
 ## 2. Default the token to no permissions
 
@@ -112,7 +113,8 @@ never appear as `${{ }}` expressions inside a `run` block. Pass them through
 `env` and quote the variable.
 
 **Why.** Expressions are pasted into the script before the shell starts. A
-pull request titled with shell syntax then executes as part of your job.
+pull request titled with shell syntax then executes as part of your job. The
+`script` input of `actions/github-script` is the same kind of sink.
 
 ```yaml
 - env:
@@ -148,6 +150,10 @@ Restrict the trust policy on the cloud side to the exact repository and ref.
 A policy that trusts every repository in an organization is a shared key
 under another name.
 
+The linter flags the usual key inputs on any action, the Azure `creds`
+input on `azure/login`, and the standard key variables in any `env` block,
+such as `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`.
+
 **Verify.** No `static-cloud-credential`, and no long-lived cloud key among
 the repository secrets.
 
@@ -158,9 +164,17 @@ full history in CI. Enable the host's secret scanning and push protection
 too.
 
 ```bash
-gitleaks protect --staged --redact --no-banner      # before each commit
-gitleaks detect --source . --redact --no-banner -v  # CI and before each PR
+# before each commit
+gitleaks protect --staged --redact --no-banner
+
+# CI and before each pull request
+gitleaks detect --source . --redact --no-banner -v \
+  --log-opts="--full-history --all --diff-merges=first-parent"
 ```
+
+The `--log-opts` line matters. By default gitleaks reads `git log -p`, which
+prints no diff for a merge commit, so a secret added while resolving a
+conflict is never scanned. `--diff-merges=first-parent` makes it visible.
 
 Install the scanner in CI from a release archive and verify its checksum
 before you run it. A scanner you did not checksum is one more unpinned
@@ -253,9 +267,13 @@ listed, the same way you would review a dependency. A skill is instructions
 plus code that run with your agent's access.
 
 ```bash
-skillspector scan <skill-or-plugin-dir> --no-llm --recursive
-python3 scripts/check_workflows.py <plugin-dir>   # frontmatter and hygiene
+skillspector scan <plugin-dir> --no-llm --recursive         # whole bundle: hooks, scripts, commands
+skillspector scan <plugin-dir>/skills --no-llm --recursive  # each skill on its own
+python3 scripts/check_workflows.py <plugin-dir>             # frontmatter and hygiene
 ```
+
+Run both scans. The bundle scan is the one that sees hooks and scripts
+outside `skills/`. The second finds each skill and rates it separately.
 
 SkillSpector is one scanner. Any scanner that reports prompt injection,
 hidden instructions, exfiltration and unsafe tool use will do. Treat a

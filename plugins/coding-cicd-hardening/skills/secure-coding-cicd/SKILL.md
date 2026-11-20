@@ -49,7 +49,7 @@ in [references/cicd-security-checklist.md](references/cicd-security-checklist.md
 
 | # | Control | Linter rule |
 |---|---|---|
-| 1 | Every action pinned to a 40-character commit SHA | `unpinned-action` |
+| 1 | Every action pinned to a 40-character commit SHA, every image to a digest | `unpinned-action`, `unpinned-image` |
 | 2 | Top-level `permissions: {}`, scopes granted per job | `missing-top-level-permissions`, `broad-permissions` |
 | 3 | `persist-credentials: false` on every checkout | `checkout-persist-credentials` |
 | 4 | No `pull_request_target` | `pull-request-target` |
@@ -66,10 +66,17 @@ in [references/cicd-security-checklist.md](references/cicd-security-checklist.md
 
 ## What the linter does not see
 
-The linter reads workflow YAML line by line. It understands the block style
-GitHub documents. Say so when you report results, and check these by hand:
+The linter reads block-style YAML into values addressed by key path, so each
+rule looks only where GitHub looks. It reads quoted keys, block scalars and
+one-line flow collections. It does not follow anchors, aliases, tags, merge
+keys or flow collections that span lines. It reports each of those as
+`unparsed-construct`, which means "this part was not checked", never as a
+pass. Treat that finding as work to do: rewrite the construct in plain block
+style or review that part by hand.
 
-- Steps written in one-line flow style.
+Check these by hand as well:
+
+- Images named through an expression such as a matrix value.
 - Actions called from inside a composite action or a reusable workflow in
   another repository.
 - Whether a pinned SHA belongs to the repository named in `uses`. A SHA from

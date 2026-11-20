@@ -8,7 +8,7 @@ Claude Code plugin marketplace by [adibirzu](https://github.com/adibirzu) for pr
 |--------|-------------|---------|
 | [prod-ready](https://github.com/adibirzu/claude-prod-ready-plugin) | Pre-production security audit, dependency hardening, CI/CD validation, and Docker readiness checks | 1.0.0 |
 | [rlm](https://github.com/adibirzu/rlm-plugin) | Budgeted recursive analysis with evidence ledgers and selective verification | 4.0.0 |
-| [multillm](plugins/multillm) | Multi-LLM gateway with model discovery, session tracking, usage controls, fusion, and cross-LLM memory | 0.9.0 |
+| [multillm](plugins/multillm) | Multi-LLM gateway with model discovery, session tracking, usage controls, fusion, and cross-LLM memory. Fails the skill scan, see [scan status](#plugin-scan-status) | 0.9.0 |
 | [oci-administrator](https://github.com/adibirzu/oci-skills) | Safety-first OCI administration, Terraform, platform engineering, storage, disaster recovery, Bastion, database, and landing-zone workflows | 2.0.0-rc.3 |
 | [just-do-it](plugins/just-do-it) | Portable PRD delivery and clean least-privilege agent-team generation across major coding harnesses | 1.5.0 |
 | [oci-observability-tools](https://github.com/adibirzu/oci-observability-tools) | Offline OCI Observability and Management skills and validators | 0.1.0 |
@@ -45,6 +45,27 @@ Refresh the catalog and an installed plugin after a release:
 /reload-plugins
 ```
 
+## Plugin scan status
+
+Every local plugin is scanned with SkillSpector 2.12.0, `--no-llm`, as a whole bundle. The verdict is published here so you can decide before you install. Scanned on 2026-11-20.
+
+| Plugin | Verdict | Score | Findings | Note |
+|---|---|---|---|---|
+| `poteto-workflow` | SAFE | 0 | 0 | Instructions only, no hooks or scripts |
+| `coding-cicd-hardening` | SAFE | 0 | 0 | Two standard-library scripts that read files and write SBOMs |
+| `just-do-it` | CAUTION | 44 | 5 | Writes agent team configurations, so it touches agent config directories |
+| `multillm` | DO_NOT_INSTALL | 100 | 37 | A `SessionStart` hook installs packages with pip and starts a background gateway that reads provider API keys |
+
+**`multillm` fails the scan.** Read [SECURITY.md](SECURITY.md#known-scan-findings) before you install it. It stays listed for existing users, with a warning in its catalog description.
+
+The rule: a plugin with a DO_NOT_INSTALL verdict may only be listed with that warning in its description, and a new plugin is not accepted with that verdict at all. `tests/test_marketplace.py` enforces the first half. Remote plugins are scanned by their own repositories, not here.
+
+Reproduce a verdict:
+
+```bash
+skillspector scan plugins/<name> --no-llm --recursive
+```
+
 ## Current Marketplace Architecture
 
 The marketplace is one manifest, `.claude-plugin/marketplace.json`, that points at two kinds of plugin source. Local plugins live in this repository and pass its CI. Remote plugins live in their own repositories and are fetched by Claude Code at install time.
@@ -56,7 +77,7 @@ flowchart LR
     subgraph repo["This repository: reviewed and gated by CI"]
         manifest
         local["Local plugins in plugins/<br/>multillm, just-do-it,<br/>poteto-workflow, coding-cicd-hardening"]
-        ci["CI gates<br/>unit tests, workflow and skill lint,<br/>ruff, bandit, gitleaks,<br/>dependency review, SBOM validation"]
+        ci["CI gates<br/>unit tests, workflow and skill lint,<br/>ruff, bandit, gitleaks,<br/>dependency review, SBOM validation,<br/>scan status gate"]
         manifest -->|"relative path"| local
         ci -.->|"must pass before merge"| manifest
         ci -.->|"must pass before merge"| local
@@ -81,15 +102,13 @@ flowchart LR
 | Contributor to this repository | Pull requests | CI with a read-only token, no `pull_request_target`, secret scan on every commit, owner approval to merge |
 | This repository to a remote plugin | A git URL in the manifest | The URL must be a public `adibirzu` repository with a valid `.claude-plugin/plugin.json`. Its content is not reviewed here and is not pinned to a commit, so a remote plugin is only as trustworthy as its own repository |
 | CI to third-party actions and tools | Code that runs with the job token | Actions pinned to 40-character commit SHAs, tools installed with pip hash checking, gitleaks verified by checksum, default token permissions empty |
-| Marketplace to your machine | Skills, commands, hooks and scripts that run with your agent's access | Read a plugin before you install it. Scan it with a skill scanner. `multillm` ships hooks that start a local gateway |
+| Marketplace to your machine | Skills, commands, hooks and scripts that run with your agent's access | Read a plugin before you install it and check its row in the scan status table. `multillm` ships hooks that install packages and start a local gateway, and fails the scan |
 
-The manifest is the only thing Claude Code reads from this repository to build the catalog. Nothing outside `.claude-plugin/` and `plugins/` is installed by any plugin.
-
-`src/aetherops/` is not a plugin, is not referenced by the manifest, and is not covered by the license below. See [SECURITY.md](SECURITY.md).
+The manifest is the only thing Claude Code reads from this repository to build the catalog. Nothing outside `.claude-plugin/` and `plugins/` is installed by any plugin, and only catalog content is allowed at the top level of this repository.
 
 ### Living-doc rule
 
-This section is part of the change, not an afterthought. Any pull request that adds, removes or moves a plugin, changes a plugin source, changes a trust boundary, or changes a CI gate updates the diagram and the tables above in the same pull request. `tests/test_marketplace.py` fails when the plugin table and the manifest disagree.
+This section is part of the change, not an afterthought. Any pull request that adds, removes or moves a plugin, changes a plugin source, changes a trust boundary, or changes a CI gate updates the diagram and the tables above in the same pull request, and rescans any plugin it touches. `tests/test_marketplace.py` fails when the plugin table, the scan status table and the manifest disagree.
 
 ## Version sync
 
@@ -133,4 +152,4 @@ export MULTILLM_HOME="$HOME/Library/Mobile Documents/com~apple~CloudDocs/.multil
 
 ## License
 
-MIT for the marketplace manifest, the plugins under `plugins/`, the tests and the CI files. Each new plugin carries its own `LICENSE` file. Remote plugins are licensed by their own repositories. `src/aetherops/` is excluded: no license is granted for it.
+MIT. See [LICENSE](LICENSE). Remote plugins are licensed by their own repositories.
