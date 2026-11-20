@@ -155,6 +155,123 @@ class CycloneDxTest(GeneratorCase):
         self.assertEqual(sorted(deps[root_ref]), sorted(c["bom-ref"] for c in cdx["components"]))
 
 
+class SourceShapesTest(GeneratorCase):
+    """Every plugin source form Claude Code documents keeps its identity."""
+
+    SHA_B = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"
+    DIGEST = "6bfa50e3d2e00c052b46abe51fff89346ac803e45771f76dcf6df1ab74cca5e1"
+
+    def catalog(self, *plugins: dict) -> tuple[dict, dict]:
+        self.write(".claude-plugin/marketplace.json", json.dumps({"name": "demo-market", "plugins": list(plugins)}))
+        cdx, spdx = self.generate()
+        return (
+            {c["name"]: c for c in cdx["components"] if c["bom-ref"].startswith("plugin:")},
+            {p["name"]: p for p in spdx["packages"]},
+        )
+
+    def test_github_source_uses_the_pinned_commit(self) -> None:
+        source = {"source": "github", "repo": "Example/Plugins", "ref": "v2.0.0", "sha": self.SHA_B}
+        cdx, spdx = self.catalog({"name": "demo", "version": "2.0.0", "source": source})
+        self.assertEqual(cdx["demo"]["purl"], f"pkg:github/example/plugins@{self.SHA_B}")
+        self.assertIn({"type": "vcs", "url": "https://github.com/Example/Plugins"}, cdx["demo"]["externalReferences"])
+        self.assertEqual(spdx["demo"]["downloadLocation"], f"git+https://github.com/Example/Plugins@{self.SHA_B}")
+
+    def test_github_source_without_a_commit_falls_back_to_ref_then_version(self) -> None:
+        cdx, _ = self.catalog(
+            {"name": "by-ref", "version": "1.0.0", "source": {"source": "github", "repo": "a/b", "ref": "main"}},
+            {"name": "by-version", "version": "1.0.0", "source": {"source": "github", "repo": "a/c"}},
+            {"name": "bare", "source": {"source": "github", "repo": "a/d"}},
+        )
+        self.assertEqual(cdx["by-ref"]["purl"], "pkg:github/a/b@main")
+        self.assertEqual(cdx["by-version"]["purl"], "pkg:github/a/c@1.0.0")
+        self.assertEqual(cdx["bare"]["purl"], "pkg:github/a/d")
+        self.assertNotIn("version", cdx["bare"])
+
+    def test_git_subdir_source_keeps_its_path(self) -> None:
+        source = {"source": "git-subdir", "url": "your-org/monorepo", "path": "tools/formatter", "sha": self.SHA_B}
+        cdx, spdx = self.catalog({"name": "formatter", "version": "1.2.0", "source": source})
+        self.assertEqual(cdx["formatter"]["purl"], f"pkg:github/your-org/monorepo@{self.SHA_B}#tools/formatter")
+        self.assertEqual(
+            spdx["formatter"]["downloadLocation"],
+            f"git+https://github.com/your-org/monorepo@{self.SHA_B}#tools/formatter",
+        )
+
+    def test_npm_source_becomes_an_npm_purl(self) -> None:
+        source = {"source": "npm", "package": "@your-org/formatter", "version": "2.0.0"}
+        cdx, _ = self.catalog({"name": "formatter", "source": source})
+        self.assertEqual(cdx["formatter"]["purl"], "pkg:npm/%40your-org/formatter@2.0.0")
+
+    def test_archive_source_records_url_and_checksum(self) -> None:
+        source = {"source": "archive", "url": "https://artifacts.example.com/f-2.0.0.zip", "sha256": self.DIGEST}
+        cdx, spdx = self.catalog({"name": "formatter", "version": "2.0.0", "source": source})
+        self.assertEqual(cdx["formatter"]["hashes"], [{"alg": "SHA-256", "content": self.DIGEST}])
+        self.assertIn(
+            {"type": "distribution", "url": "https://artifacts.example.com/f-2.0.0.zip"},
+            cdx["formatter"]["externalReferences"],
+        )
+        self.assertEqual(spdx["formatter"]["downloadLocation"], "https://artifacts.example.com/f-2.0.0.zip")
+        self.assertEqual(spdx["formatter"]["checksums"], [{"algorithm": "SHA256", "checksumValue": self.DIGEST}])
+
+    def test_unknown_source_forms_are_listed_without_invented_identity(self) -> None:
+        cdx, spdx = self.catalog(
+            {"name": "by-command", "source": {"source": "command", "command": "my-tool plugin-path"}},
+            {"name": "ssh-git", "version": "1.0.0", "source": {"source": "url", "url": "git@example.com:a/b.git"}},
+        )
+        self.assertNotIn("purl", cdx["by-command"])
+        self.assertEqual(spdx["by-command"]["downloadLocation"], "NOASSERTION")
+        self.assertNotIn("externalReferences", cdx["ssh-git"])
+        kinds = {p["name"]: p["value"] for p in cdx["by-command"]["properties"]}
+        self.assertEqual(kinds["marketplace:source"], "command")
+
+    def test_local_plugin_version_comes_from_its_own_manifest(self) -> None:
+        cdx, spdx = self.catalog({"name": "local-one", "source": "./plugins/local-one"})
+        self.assertEqual(cdx["local-one"]["version"], "1.0.0")
+        self.assertEqual(cdx["local-one"]["purl"], "pkg:generic/local-one@1.0.0")
+        self.assertEqual(spdx["local-one"]["versionInfo"], "1.0.0")
+
+    def test_local_source_outside_the_repository_is_not_read(self) -> None:
+        outside = self.root.parent / "elsewhere"
+        outside.mkdir()
+        (outside / "secret.txt").write_text("not ours", encoding="utf-8")
+        cdx, _ = self.catalog({"name": "escape", "version": "1.0.0", "source": "../elsewhere"})
+        names = {p["name"] for p in cdx["escape"]["properties"]}
+        self.assertNotIn("marketplace:tree-sha256", names)
+        self.assertIn("marketplace:source-outside-root", names)
+
+
+class WorkflowInventoryTest(GeneratorCase):
+    def components(self, workflow: str) -> tuple[list[dict], list[dict]]:
+        self.write(".github/workflows/ci.yml", workflow)
+        cdx, spdx = self.generate()
+        return cdx["components"], spdx["packages"]
+
+    def test_job_service_and_step_images_are_listed(self) -> None:
+        digest = "sha256:" + "c" * 64
+        workflow = WORKFLOW.replace(
+            "    steps:\n",
+            f"    container: node:24\n    services:\n      db:\n        image: ghcr.io/example/pg@{digest}\n    steps:\n",
+        ) + "      - uses: docker://alpine:3.20\n"
+        components, _ = self.components(workflow)
+        images = {c["name"]: c for c in components if c["type"] == "container"}
+        self.assertEqual(sorted(images), ["alpine", "ghcr.io/example/pg", "node"])
+        self.assertEqual(images["node"]["version"], "24")
+        self.assertEqual(images["alpine"]["version"], "3.20")
+        self.assertEqual(images["ghcr.io/example/pg"]["version"], digest)
+
+    def test_text_that_only_looks_like_an_action_is_not_listed(self) -> None:
+        workflow = WORKFLOW + "      - name: |\n          uses: example/fake@v1\n        run: echo ok\n"
+        components, _ = self.components(workflow)
+        self.assertNotIn("example/fake", {c["name"] for c in components})
+
+    def test_similar_action_names_get_distinct_identifiers(self) -> None:
+        workflow = WORKFLOW + f"      - uses: example/tool/batch@{SHA}\n      - uses: example/tool-batch@{SHA}\n"
+        components, packages = self.components(workflow)
+        ids = [p["SPDXID"] for p in packages]
+        self.assertEqual(len(ids), len(set(ids)))
+        refs = [c["bom-ref"] for c in components]
+        self.assertEqual(len(refs), len(set(refs)))
+
+
 class SpdxTest(GeneratorCase):
     def test_document_header_is_spdx_2_3(self) -> None:
         _, spdx = self.generate()
