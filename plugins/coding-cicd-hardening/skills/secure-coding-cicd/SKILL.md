@@ -25,6 +25,7 @@ python3 scripts/check_workflows.py <repo-root>
 python3 scripts/check_workflows.py <repo-root> --format json
 
 # 3. Inventory a plugin marketplace as CycloneDX 1.7 and SPDX 2.3.
+#    Exit 1 means part of a workflow could not be read, so nothing was written.
 python3 scripts/generate_sbom.py <repo-root> --spec-version 1.7 --output-dir sbom
 ```
 

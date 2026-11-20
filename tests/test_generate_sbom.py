@@ -120,7 +120,7 @@ class CycloneDxTest(GeneratorCase):
         by_name = {c["name"]: c for c in cdx["components"]}
         self.assertEqual(sorted(by_name), ["actions/checkout", "local-one", "remote-one"])
         self.assertEqual(by_name["remote-one"]["version"], "2.1.0")
-        self.assertEqual(by_name["remote-one"]["purl"], "pkg:github/demo/remote-one@2.1.0")
+        self.assertEqual(by_name["remote-one"]["purl"], "pkg:github/demo/remote-one")
         self.assertEqual(by_name["actions/checkout"]["version"], SHA)
         self.assertEqual(by_name["actions/checkout"]["purl"], f"pkg:github/actions/checkout@{SHA}")
         self.assertEqual(by_name["local-one"]["licenses"], [{"license": {"id": "MIT"}}])
@@ -176,16 +176,82 @@ class SourceShapesTest(GeneratorCase):
         self.assertIn({"type": "vcs", "url": "https://github.com/Example/Plugins"}, cdx["demo"]["externalReferences"])
         self.assertEqual(spdx["demo"]["downloadLocation"], f"git+https://github.com/Example/Plugins@{self.SHA_B}")
 
-    def test_github_source_without_a_commit_falls_back_to_ref_then_version(self) -> None:
+    def test_git_purl_names_what_is_fetched_not_the_catalog_label(self) -> None:
         cdx, _ = self.catalog(
             {"name": "by-ref", "version": "1.0.0", "source": {"source": "github", "repo": "a/b", "ref": "main"}},
-            {"name": "by-version", "version": "1.0.0", "source": {"source": "github", "repo": "a/c"}},
+            {"name": "unpinned", "version": "9.0.0", "source": {"source": "github", "repo": "a/c"}},
             {"name": "bare", "source": {"source": "github", "repo": "a/d"}},
         )
         self.assertEqual(cdx["by-ref"]["purl"], "pkg:github/a/b@main")
-        self.assertEqual(cdx["by-version"]["purl"], "pkg:github/a/c@1.0.0")
+        # No ref and no sha means the default branch. The catalog version is a label.
+        self.assertEqual(cdx["unpinned"]["purl"], "pkg:github/a/c")
+        self.assertEqual(cdx["unpinned"]["version"], "9.0.0")
+        revisions = {p["name"]: p["value"] for p in cdx["unpinned"]["properties"]}
+        self.assertEqual(revisions["marketplace:revision"], "default-branch")
         self.assertEqual(cdx["bare"]["purl"], "pkg:github/a/d")
         self.assertNotIn("version", cdx["bare"])
+
+    def test_ssh_github_urls_keep_their_repository_identity(self) -> None:
+        cdx, spdx = self.catalog(
+            {"name": "ssh-url", "source": {"source": "url", "url": "ssh://git@github.com/Example/Mono.git", "sha": self.SHA_B}},
+            {"name": "scp-url", "source": {"source": "url", "url": "git@github.com:Example/Mono.git"}},
+        )
+        self.assertEqual(cdx["ssh-url"]["purl"], f"pkg:github/example/mono@{self.SHA_B}")
+        self.assertEqual(spdx["ssh-url"]["downloadLocation"], f"git+ssh://git@github.com/Example/Mono.git@{self.SHA_B}")
+        self.assertEqual(cdx["scp-url"]["purl"], "pkg:github/example/mono")
+
+    def test_subpaths_are_percent_encoded(self) -> None:
+        source = {"source": "git-subdir", "url": "example/monorepo", "path": "tools/my formatter", "sha": self.SHA_B}
+        cdx, spdx = self.catalog({"name": "formatter", "source": source})
+        self.assertEqual(cdx["formatter"]["purl"], f"pkg:github/example/monorepo@{self.SHA_B}#tools/my%20formatter")
+        self.assertNotIn(" ", spdx["formatter"]["downloadLocation"])
+
+    def test_npm_selector_and_registry_are_kept(self) -> None:
+        cdx, _ = self.catalog(
+            {"name": "embedded", "version": "9.0.0", "source": {"source": "npm", "package": "@example/formatter@2.0.0"}},
+            {
+                "name": "private",
+                "source": {"source": "npm", "package": "formatter", "version": "1.0.0", "registry": "https://npm.example.com"},
+            },
+        )
+        self.assertEqual(cdx["embedded"]["purl"], "pkg:npm/%40example/formatter@2.0.0")
+        self.assertEqual(cdx["private"]["purl"], "pkg:npm/formatter@1.0.0?repository_url=https%3A%2F%2Fnpm.example.com")
+
+    def test_bare_local_source_resolves_under_plugin_root(self) -> None:
+        self.write(
+            ".claude-plugin/marketplace.json",
+            json.dumps({"name": "demo-market", "metadata": {"pluginRoot": "./plugins"}, "plugins": [{"name": "local-one", "source": "local-one"}]}),
+        )
+        cdx, _ = self.generate()
+        local = next(c for c in cdx["components"] if c["name"] == "local-one")
+        self.assertEqual(local["version"], "1.0.0")
+        self.assertIn("marketplace:tree-sha256", {p["name"] for p in local["properties"]})
+
+    def test_root_plugin_digest_ignores_generated_sboms(self) -> None:
+        self.write(".claude-plugin/plugin.json", json.dumps({"name": "root-plugin", "version": "1.0.0"}))
+        self.write(".claude-plugin/marketplace.json", json.dumps({"name": "demo-market", "plugins": [{"name": "root-plugin", "source": "."}]}))
+        inside = self.root / "sbom"
+        outputs = []
+        for _ in range(2):
+            self.assertEqual(self.generator.main([str(self.root), "--output-dir", str(inside)]), 0)
+            outputs.append((inside / "marketplace.cdx.json").read_bytes())
+        self.assertEqual(outputs[0], outputs[1])
+
+    def test_duplicate_catalog_identities_are_rejected(self) -> None:
+        self.write(
+            ".claude-plugin/marketplace.json",
+            json.dumps(
+                {
+                    "name": "demo-market",
+                    "plugins": [
+                        {"name": "twin", "version": "1.0.0", "source": {"source": "github", "repo": "example/one"}},
+                        {"name": "twin", "version": "1.0.0", "source": {"source": "github", "repo": "example/two"}},
+                    ],
+                }
+            ),
+        )
+        self.assertEqual(self.generator.main([str(self.root), "--output-dir", str(self.out)]), 2)
+        self.assertFalse((self.out / "marketplace.cdx.json").exists())
 
     def test_git_subdir_source_keeps_its_path(self) -> None:
         source = {"source": "git-subdir", "url": "your-org/monorepo", "path": "tools/formatter", "sha": self.SHA_B}
@@ -263,6 +329,22 @@ class WorkflowInventoryTest(GeneratorCase):
         components, _ = self.components(workflow)
         self.assertNotIn("example/fake", {c["name"] for c in components})
 
+    def test_matrix_images_are_listed(self) -> None:
+        matrix = "    strategy:\n      matrix:\n        image: [alpine:3.20, busybox:1.36]\n    container: ${{ matrix.image }}\n"
+        components, _ = self.components(WORKFLOW.replace("    steps:\n", matrix + "    steps:\n"))
+        self.assertLessEqual({"alpine", "busybox"}, {c["name"] for c in components if c["type"] == "container"})
+
+    def test_unreadable_workflow_parts_stop_generation_unless_allowed(self) -> None:
+        workflow = WORKFLOW.replace(f"      - uses: actions/checkout@{SHA} # v7.0.1\n", f"      - uses: &checkout actions/checkout@{SHA}\n", 1)
+        self.write(".github/workflows/ci.yml", workflow)
+        self.assertEqual(self.generator.main([str(self.root), "--output-dir", str(self.out)]), 1)
+        self.assertFalse((self.out / "marketplace.cdx.json").exists())
+        code = self.generator.main([str(self.root), "--output-dir", str(self.out), "--allow-incomplete"])
+        self.assertEqual(code, 0)
+        cdx = json.loads((self.out / "marketplace.cdx.json").read_text(encoding="utf-8"))
+        flags = {p["name"]: p["value"] for p in cdx["metadata"]["properties"]}
+        self.assertEqual(flags["marketplace:inventory-incomplete"], "true")
+
     def test_similar_action_names_get_distinct_identifiers(self) -> None:
         workflow = WORKFLOW + f"      - uses: example/tool/batch@{SHA}\n      - uses: example/tool-batch@{SHA}\n"
         components, packages = self.components(workflow)
@@ -311,6 +393,13 @@ class DeterminismAndCliTest(GeneratorCase):
         self.generate()
         second = [(self.out / n).read_bytes() for n in ("marketplace.cdx.json", "marketplace.spdx.json")]
         self.assertEqual(first, second)
+
+    def test_each_build_time_gets_its_own_document_identity(self) -> None:
+        _, first = self.generate()
+        with mock.patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "1795219200"}):
+            _, second = self.generate()
+        self.assertNotEqual(first["creationInfo"]["created"], second["creationInfo"]["created"])
+        self.assertNotEqual(first["documentNamespace"], second["documentNamespace"])
 
     def test_unsupported_spec_version_is_rejected(self) -> None:
         with self.assertRaises(SystemExit) as caught:

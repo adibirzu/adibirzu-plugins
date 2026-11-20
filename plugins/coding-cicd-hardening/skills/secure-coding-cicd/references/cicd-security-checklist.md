@@ -44,7 +44,13 @@ gh api repos/actions/checkout/commits/v7.0.1 --jq .sha
 ```
 
 The same holds for reusable workflows and container images. Pin images by
-digest: `image@sha256:<64 hex>`.
+digest. A job container or a service image is written
+`image@sha256:<64 hex>`. A step that runs an image is written
+`uses: docker://image@sha256:<64 hex>`.
+
+An image named through `${{ matrix.<axis> }}` is checked against the literal
+values of that matrix axis. Any other expression is reported as
+`unparsed-construct`, because it cannot be checked.
 
 **Verify.** `python3 scripts/check_workflows.py .` reports no
 `unpinned-action` and no `unpinned-image`.

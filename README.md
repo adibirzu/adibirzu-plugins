@@ -49,21 +49,22 @@ Refresh the catalog and an installed plugin after a release:
 
 Every local plugin is scanned with SkillSpector 2.12.0, `--no-llm`, as a whole bundle. The verdict is published here so you can decide before you install. Scanned on 2026-11-20.
 
-| Plugin | Verdict | Score | Findings | Note |
-|---|---|---|---|---|
-| `poteto-workflow` | SAFE | 0 | 0 | Instructions only, no hooks or scripts |
-| `coding-cicd-hardening` | SAFE | 0 | 0 | Two standard-library scripts that read files and write SBOMs |
-| `just-do-it` | CAUTION | 44 | 5 | Writes agent team configurations, so it touches agent config directories |
-| `multillm` | DO_NOT_INSTALL | 100 | 37 | A `SessionStart` hook installs packages with pip and starts a background gateway that reads provider API keys |
+| Plugin | Verdict | Score | Findings | Coverage | Note |
+|---|---|---|---|---|---|
+| `poteto-workflow` | SAFE | 0 | 0 | complete | Instructions only, no hooks or scripts |
+| `coding-cicd-hardening` | SAFE | 0 | 0 | complete | Two standard-library scripts that read files and write SBOMs |
+| `just-do-it` | CAUTION | 44 | 5 | complete | Writes agent team configurations, so it touches agent config directories |
+| `multillm` | DO_NOT_INSTALL | 100 | 37 | partial | A `SessionStart` hook installs packages with pip and starts a background gateway that reads provider API keys. Coverage is partial: the scanner could not fully inspect every file, so the real picture may be worse |
 
 **`multillm` fails the scan.** Read [SECURITY.md](SECURITY.md#known-scan-findings) before you install it. It stays listed for existing users, with a warning in its catalog description.
 
-The rule: a plugin with a DO_NOT_INSTALL verdict may only be listed with that warning in its description, and a new plugin is not accepted with that verdict at all. `tests/test_marketplace.py` enforces the first half. Remote plugins are scanned by their own repositories, not here.
+The verdicts are recorded in [.github/skill-scan/status.json](.github/skill-scan/status.json), each one pinned to a digest of the plugin directory it was taken from. The tests fail when a plugin changes without a new scan, when this table and that file disagree, and when a DO_NOT_INSTALL plugin is listed without the warning in its description. A new plugin is not accepted with that verdict at all. Remote plugins are scanned by their own repositories, not here.
 
-Reproduce a verdict:
+Reproduce a verdict, or record a new one after changing a plugin:
 
 ```bash
 skillspector scan plugins/<name> --no-llm --recursive
+python3 .github/ci/record_scan_status.py
 ```
 
 ## Current Marketplace Architecture

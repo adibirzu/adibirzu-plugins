@@ -63,9 +63,22 @@ It writes `sbom/marketplace.cdx.json` and `sbom/marketplace.spdx.json`.
   and `git-subdir` sources get a repository URL and a `pkg:github/` purl
   pinned to the declared commit when there is one, `npm` sources get a
   `pkg:npm/` purl, and `archive` sources get their URL and checksum.
+- A package URL names what is actually fetched. A git source with no commit
+  and no ref tracks the default branch, so its purl has no version and the
+  component carries `marketplace:revision: default-branch`. The catalog
+  version is a label and is never used as a revision.
 - Pinned actions carry the commit SHA as their version.
 - Job, service and step container images are listed as container
-  components with their tag or digest.
+  components with their tag or digest. Images taken from a matrix axis are
+  listed once per value.
+
+The inventory has to be complete to be worth publishing. If a workflow uses
+a construct the reader cannot follow, such as an anchor or an image built
+from an expression, the script prints the file and line and exits 1 without
+writing anything. Rewrite the construct in plain block YAML. To publish
+anyway, pass `--allow-incomplete`: both documents are then marked incomplete.
+A catalog that lists the same plugin name and version twice is rejected with
+exit 2, because the two entries would share one identifier.
 
 Output is reproducible. Set `SOURCE_DATE_EPOCH` and the same tree gives
 byte-identical files, so a consumer can regenerate and compare:

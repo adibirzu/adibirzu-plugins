@@ -357,6 +357,86 @@ class WorkflowRulesTest(LinterCase):
         self.workflow(GOOD_WORKFLOW + '      - run: "echo ${{ github.event[\\"comment\\"][\\"body\\"] }}"\n')
         self.assertEqual(self.rules(), ["script-injection"])
 
+    def test_escaped_keys_and_values_are_decoded_before_rules_apply(self) -> None:
+        escaped_key = GOOD_WORKFLOW + '      - "u\\u0073es": actions/checkout@v4\n'
+        self.workflow(escaped_key)
+        self.assertEqual(self.rules(), ["checkout-persist-credentials", "unpinned-action"])
+        self.workflow(GOOD_WORKFLOW.replace("permissions: {}\n", 'permissions: "write\\u002dall"\n'))
+        self.assertEqual(self.rules(), ["broad-permissions"])
+        self.workflow(GOOD_WORKFLOW.replace("persist-credentials: false", 'persist-credentials: "f\\u0061lse"'))
+        self.assertEqual(self.rules(), [])
+
+    def test_block_scalar_values_are_decoded(self) -> None:
+        trigger = GOOD_WORKFLOW.replace("on:\n  push:\n    branches: [main]\n  pull_request:\n", "on: >-\n  pull_request_target\n")
+        self.workflow(trigger)
+        self.assertEqual(self.rules(), ["pull-request-target"])
+        self.workflow(GOOD_WORKFLOW.replace("permissions: {}\n", "permissions: >-\n  write-all\n"))
+        self.assertEqual(self.rules(), ["broad-permissions"])
+        self.workflow(GOOD_WORKFLOW.replace("persist-credentials: false", "persist-credentials: >-\n            false"))
+        self.assertEqual(self.rules(), [])
+
+    def test_scalar_on_the_line_after_its_key_is_read(self) -> None:
+        self.workflow(GOOD_WORKFLOW.replace("permissions: {}\n", "permissions:\n  read-all\n"))
+        self.assertEqual(self.rules(), [])
+        self.workflow(GOOD_WORKFLOW.replace("permissions: {}\n", "permissions:\n  write-all\n"))
+        self.assertEqual(self.rules(), ["broad-permissions"])
+
+    def test_byte_order_mark_does_not_hide_the_first_key(self) -> None:
+        self.workflow("\ufeffon: pull_request_target\n" + GOOD_WORKFLOW.split("pull_request:\n", 1)[1])
+        self.assertEqual(self.rules(), ["pull-request-target"])
+
+    def test_expression_paths_are_read_like_github_reads_them(self) -> None:
+        for expr in ("github.event.commits[0].message", "GITHUB.event.pull_request.title", "github.event.workflow_run.head_branch"):
+            with self.subTest(expr=expr):
+                self.workflow(GOOD_WORKFLOW + "      - run: echo ${{ " + expr + " }}\n")
+                self.assertEqual(self.rules(), ["script-injection"])
+        self.workflow(GOOD_WORKFLOW + "      - run: \"echo ${{ 'github.event.issue.title' }}\"\n")
+        self.assertEqual(self.rules(), [])
+
+    def test_comments_follow_yaml_scalar_style(self) -> None:
+        quoted = GOOD_WORKFLOW + '      - run: "echo \\"text # more ${{ github.event.issue.title }}\\""\n'
+        self.workflow(quoted)
+        self.assertEqual(self.rules(), ["script-injection"])
+        plain = GOOD_WORKFLOW + "      - run: echo it\\'s # ${{ github.event.issue.title }}\n"
+        self.workflow(plain)
+        self.assertEqual(self.rules(), [])
+
+    def test_explicit_block_indentation_ends_the_script_where_yaml_does(self) -> None:
+        text = GOOD_WORKFLOW + (
+            "      - run: |4-\n"
+            "            echo ok\n"
+            "         # ${{ github.event.issue.title }}\n"
+        )
+        self.workflow(text)
+        self.assertEqual(self.rules(), [])
+
+    def test_anchors_inside_flow_collections_are_reported(self) -> None:
+        text = GOOD_WORKFLOW.replace("on:\n  push:\n    branches: [main]\n  pull_request:\n", "on: [&event pull_request_target]\n")
+        self.workflow(text + "concurrency: {group: *event}\n")
+        self.assertIn("unparsed-construct", self.rules())
+
+    def test_matrix_images_are_resolved_or_reported(self) -> None:
+        matrix = "    strategy:\n      matrix:\n        image: [alpine:3.20]\n    container: ${{ matrix.image }}\n"
+        self.workflow(GOOD_WORKFLOW.replace("    steps:\n", matrix + "    steps:\n"))
+        self.assertEqual(self.rules(), ["unpinned-image"])
+        pinned = matrix.replace("alpine:3.20", "alpine@sha256:" + "d" * 64)
+        self.workflow(GOOD_WORKFLOW.replace("    steps:\n", pinned + "    steps:\n"))
+        self.assertEqual(self.rules(), [])
+        self.workflow(GOOD_WORKFLOW.replace("    steps:\n", "    container: ${{ inputs.image }}\n    steps:\n"))
+        self.assertEqual(self.rules(), ["unparsed-construct"])
+
+    def test_credential_names_only_count_in_real_env_blocks(self) -> None:
+        matrix = "    strategy:\n      matrix:\n        include:\n          - env:\n              AWS_ACCESS_KEY_ID: fixture\n"
+        self.workflow(GOOD_WORKFLOW.replace("    steps:\n", matrix + "    steps:\n"))
+        self.assertEqual(self.rules(), [])
+        for block in (
+            "env:\n  AWS_SECRET_ACCESS_KEY: x\n",
+            "jobs:\n  test:\n    container:\n      image: node@sha256:" + "e" * 64 + "\n      env:\n        AWS_SECRET_ACCESS_KEY: x\n",
+        ):
+            with self.subTest(block=block[:20]):
+                self.workflow(GOOD_WORKFLOW.replace("jobs:\n  test:\n", block if block.startswith("jobs") else block + "jobs:\n  test:\n"))
+                self.assertEqual(self.rules(), ["static-cloud-credential"])
+
     def test_same_indent_sequences_are_read(self) -> None:
         text = (
             "name: ci\non:\n- push\npermissions: {}\njobs:\n  test:\n    runs-on: ubuntu-24.04\n    steps:\n"
@@ -440,6 +520,17 @@ class TestIsolationRulesTest(LinterCase):
                 self.assertEqual(len(found), 1)
         self.write("tests/test_api.py", cases["wrapped"])
         self.assertEqual(self.findings("prod-url-default")[0].line, 3)
+
+    def test_python_lookups_are_resolved_through_imports(self) -> None:
+        aliased = f'from os import getenv as env\nBASE = env(\n    "API_URL",\n    "https://api.{REAL_HOST}",\n)\n'
+        self.write("tests/test_api.py", aliased)
+        self.assertEqual([f.line for f in self.findings("prod-url-default")], [4])
+        module_alias = f'import os as system\nBASE = system.environ.get("API_URL", "https://api.{REAL_HOST}")\n'
+        self.write("tests/test_api.py", module_alias)
+        self.assertEqual(self.rules(), ["prod-url-default"])
+        unrelated = f'BASE = Config().getenv("API_URL", "https://api.{REAL_HOST}")\n'
+        self.write("tests/test_api.py", unrelated)
+        self.assertEqual(self.rules(), [])
 
     def test_local_and_reserved_hosts_are_allowed(self) -> None:
         self.write(

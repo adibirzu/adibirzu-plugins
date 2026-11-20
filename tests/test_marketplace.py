@@ -31,6 +31,13 @@ LINTER = REPO / "plugins" / "coding-cicd-hardening" / "scripts" / "check_workflo
 SEMVER = re.compile(r"^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$")
 KEBAB = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 FULL_SHA_USE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}$")
+IMAGE_DIGEST_USE = re.compile(r"^docker://[^@\s]+@sha256:[0-9a-f]{64}$")
+SCAN_STATUS = REPO / ".github" / "skill-scan" / "status.json"
+GENERATOR = REPO / "plugins" / "coding-cicd-hardening" / "scripts" / "generate_sbom.py"
+SCAN_ROW = re.compile(
+    r"^\| `(?P<name>[a-z0-9-]+)` \| (?P<verdict>[A-Z_]+) \| (?P<score>\d+) \| (?P<findings>\d+) \| (?P<coverage>[a-z]+) \|",
+    re.M,
+)
 README_ROW = re.compile(
     r"^\| \[(?P<name>[a-z0-9-]+)\]\((?P<link>[^)]+)\) \| (?P<desc>.+) \| (?P<version>\S+) \|$"
 )
@@ -421,7 +428,9 @@ class WorkflowHardeningTest(unittest.TestCase):
             for ref in workflow_values(path, "uses"):
                 seen += 1
                 with self.subTest(workflow=path.name, uses=ref):
-                    self.assertRegex(ref, FULL_SHA_USE)
+                    # An action needs a commit SHA. A container image needs a digest.
+                    pattern = IMAGE_DIGEST_USE if ref.startswith("docker://") else FULL_SHA_USE
+                    self.assertRegex(ref, pattern)
         self.assertGreaterEqual(seen, 4)
 
     def test_real_workflows_are_clean_and_every_control_is_enforced(self) -> None:
@@ -440,11 +449,14 @@ class WorkflowHardeningTest(unittest.TestCase):
         self.assertIn("python3 -m unittest discover -s tests -v", runs)
         self.assertIn("plugins/coding-cicd-hardening/scripts/check_workflows.py .", runs)
         self.assertIn("sha256sum --check --strict", runs)
-        scan = [line for line in runs.splitlines() if "gitleaks\" detect" in line or "gitleaks detect" in line]
+        # Join shell line continuations so each command is one line.
+        commands = runs.replace("\\\n", " ").splitlines()
+        scan = [line for line in commands if "gitleaks\" detect" in line or "gitleaks detect" in line]
         self.assertEqual(len(scan), 1)
         self.assertIn("--redact", scan[0])
         # Without merge diffs a secret added while resolving a conflict is never scanned.
-        self.assertIn("--diff-merges=first-parent", runs)
+        self.assertIn("--diff-merges=first-parent", scan[0])
+        self.assertIn("--all", scan[0])
 
     def test_sbom_workflow_generates_validates_and_uploads_both_formats(self) -> None:
         path = WORKFLOWS / "sbom.yml"
@@ -506,20 +518,61 @@ class RepositoryBaselineTest(unittest.TestCase):
         present = {p.name for p in REPO.iterdir() if p.name not in SKIP_DIRS | SKIP_FILES}
         self.assertEqual(present - allowed, set())
 
-    def test_plugin_scan_status_is_published_and_gates_the_catalog(self) -> None:
+    def scan_status(self) -> dict:
+        return load_json(SCAN_STATUS)
+
+    def test_scan_evidence_covers_every_local_plugin_at_its_current_content(self) -> None:
+        status = self.scan_status()
+        self.assertEqual(status["scanner"], "SkillSpector")
+        self.assertRegex(status["scanned"], r"^\d{4}-\d{2}-\d{2}$")
+        spec = importlib.util.spec_from_file_location("generate_sbom", GENERATOR)
+        generator = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = generator
+        spec.loader.exec_module(generator)
+        self.assertEqual(set(status["plugins"]), {plugin["name"] for plugin, _ in local_plugins()})
+        for plugin, root in local_plugins():
+            with self.subTest(plugin=plugin["name"]):
+                record = status["plugins"][plugin["name"]]
+                self.assertIn(record["verdict"], {"SAFE", "CAUTION", "DO_NOT_INSTALL"})
+                self.assertIn(record["coverage"], {"complete", "partial"})
+                # A plugin that changed since its scan has no valid verdict.
+                self.assertEqual(
+                    record["tree_sha256"],
+                    generator.tree_digest(root),
+                    "plugin changed since it was scanned: run .github/ci/record_scan_status.py",
+                )
+
+    def test_new_plugins_scan_safe(self) -> None:
+        for name in NEW_PLUGINS:
+            with self.subTest(plugin=name):
+                record = self.scan_status()["plugins"][name]
+                self.assertEqual((record["verdict"], record["findings"], record["coverage"]), ("SAFE", 0, "complete"))
+
+    def test_readme_scan_table_matches_the_evidence(self) -> None:
         text = read(README)
         self.assertIn("## Plugin scan status", text)
         section = text.split("## Plugin scan status", 1)[1].split("\n## ", 1)[0]
-        verdicts = dict(re.findall(r"^\| `([a-z0-9-]+)` \| (SAFE|CAUTION|DO_NOT_INSTALL) \|", section, re.M))
-        self.assertEqual(set(verdicts), {plugin["name"] for plugin, _ in local_plugins()})
-        self.assertEqual(verdicts["poteto-workflow"], "SAFE")
-        self.assertEqual(verdicts["coding-cicd-hardening"], "SAFE")
+        rows = {
+            match.group("name"): {
+                "verdict": match.group("verdict"),
+                "score": int(match.group("score")),
+                "findings": int(match.group("findings")),
+                "coverage": match.group("coverage"),
+            }
+            for match in SCAN_ROW.finditer(section)
+        }
+        expected = {
+            name: {key: record[key] for key in ("verdict", "score", "findings", "coverage")}
+            for name, record in self.scan_status()["plugins"].items()
+        }
+        self.assertEqual(rows, expected)
+
+    def test_a_plugin_that_fails_the_scan_is_only_listed_with_a_warning(self) -> None:
         entries = {plugin["name"]: plugin for plugin in marketplace_plugins()}
-        for name, verdict in verdicts.items():
-            with self.subTest(plugin=name, verdict=verdict):
+        for name, record in self.scan_status()["plugins"].items():
+            with self.subTest(plugin=name, verdict=record["verdict"]):
                 warned = "SECURITY.md before installing" in entries[name]["description"]
-                # A plugin that fails the scan may only stay listed with a visible warning.
-                self.assertEqual(warned, verdict == "DO_NOT_INSTALL")
+                self.assertEqual(warned, record["verdict"] == "DO_NOT_INSTALL")
         self.assertIn("multillm", read(REPO / "SECURITY.md").split("## Known scan findings", 1)[1])
 
     def test_contributing_carries_the_pr_checklist(self) -> None:

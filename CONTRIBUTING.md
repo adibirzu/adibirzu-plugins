@@ -80,7 +80,8 @@ Copy this into the pull request description and tick each item.
 - [ ] `python3 plugins/coding-cicd-hardening/scripts/check_workflows.py .` reports 0 findings
 - [ ] `gitleaks protect --staged --redact --no-banner` was clean on every commit
 - [ ] `gitleaks detect --source . --redact --no-banner -v --log-opts="--full-history --all --diff-merges=first-parent"` is clean
-- [ ] `skillspector scan <plugin-dir> --no-llm --recursive` and `skillspector scan <plugin-dir>/skills --no-llm --recursive` both ran, and the "Plugin scan status" table in README.md shows the result
+- [ ] `skillspector scan <plugin-dir> --no-llm --recursive` and `skillspector scan <plugin-dir>/skills --no-llm --recursive` both ran
+- [ ] `python3 .github/ci/record_scan_status.py` was rerun after the last change under `plugins/`, and the "Plugin scan status" table in README.md matches `.github/skill-scan/status.json`
 - [ ] No plugin is added or kept with a DO_NOT_INSTALL verdict unless its catalog description carries the warning the tests require
 - [ ] No secrets, private hostnames, internal addresses or personal data in the diff
 - [ ] Versions agree across marketplace.json, plugin.json and the README table

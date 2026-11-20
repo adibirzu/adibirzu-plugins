@@ -58,7 +58,23 @@ SKIP_DIRS = {
 TEST_DIRS = {"tests", "test", "__tests__", "e2e"}
 TEST_SUFFIXES = (".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")
 
-QUOTE_CHARS = frozenset({chr(34), chr(39)})  # double and single quote
+DOUBLE_QUOTE, SINGLE_QUOTE, BACKSLASH = chr(34), chr(39), chr(92)
+QUOTE_CHARS = frozenset({DOUBLE_QUOTE, SINGLE_QUOTE})
+BYTE_ORDER_MARK = chr(0xFEFF)
+SIMPLE_ESCAPES = {
+    "0": chr(0),
+    "t": chr(9),
+    "n": chr(10),
+    "r": chr(13),
+    "e": chr(27),
+    " ": " ",
+    "/": "/",
+    DOUBLE_QUOTE: DOUBLE_QUOTE,
+    BACKSLASH: BACKSLASH,
+}
+HEX_ESCAPES = {"x": 2, "u": 4, "U": 8}
+# A quote only opens a quoted scalar where a scalar can start.
+SCALAR_STARTS = frozenset({"", ":", "-", ",", "{", "["})
 FULL_SHA_REF = re.compile(r"^[^@\s]+@[0-9a-f]{40}$")
 IMAGE_DIGEST = re.compile(r"@sha256:[0-9a-f]{64}$")
 KEY_LINE = re.compile(
@@ -67,9 +83,13 @@ KEY_LINE = re.compile(
 )
 EXPRESSION = re.compile(r"\$\{\{(.*?)\}\}", re.S)
 BRACKET_ACCESS = re.compile(r"\[[\"']([^\"'\]]+)[\"']\]")
+INDEX_ACCESS = re.compile(r"\[(\d+|\*)\]")
+STRING_LITERAL = re.compile(r"'[^']*'")
+MATRIX_VALUE = re.compile(r"^\$\{\{\s*matrix\.([\w-]+)\s*\}\}$")
 UNTRUSTED_CONTEXT = re.compile(
     r"(?<![\w.])(github\.head_ref"
-    r"|github\.event[\w.*]*?[._](body|title|ref|label|message|name|email|default_branch|page_name))"
+    r"|github\.event[\w.*]*?[._]"
+    r"(body|title|ref|label|message|name|email|default_branch|head_branch|page_name))"
     r"(?![\w])"
 )
 CREDENTIAL_ENV = {
@@ -130,28 +150,103 @@ class Frame:
     is_open: bool = True
     is_item: bool = False
     count: int = 0
+    has_children: bool = False
 
 
 def strip_comment(text: str) -> str:
-    """Drop a YAML comment, leaving hashes inside quotes alone."""
-    quote = ""
-    for index, char in enumerate(text):
-        if quote:
-            if char == quote:
+    """Drop a YAML comment, following the quoting rules of each scalar style.
+
+    A quote character only opens a quoted scalar where a scalar can start.
+    Inside a plain scalar it is ordinary text, so a later hash still starts a
+    comment. Inside double quotes a backslash escapes the next character.
+    """
+    quote, previous, index = "", "", 0
+    while index < len(text):
+        char = text[index]
+        if quote == DOUBLE_QUOTE:
+            if char == BACKSLASH:
+                index += 2
+                continue
+            if char == DOUBLE_QUOTE:
                 quote = ""
-        elif char in QUOTE_CHARS:
+        elif quote == SINGLE_QUOTE:
+            if char == SINGLE_QUOTE:
+                if text[index + 1 : index + 2] == SINGLE_QUOTE:
+                    index += 2
+                    continue
+                quote = ""
+        elif char in QUOTE_CHARS and previous in SCALAR_STARTS:
             quote = char
         elif char == "#" and (index == 0 or text[index - 1].isspace()):
             return text[:index]
+        if not char.isspace():
+            previous = char
+        index += 1
     return text
 
 
 def strip_quotes(value: str) -> str:
-    """Remove one pair of matching quotes around a YAML scalar."""
+    """Remove one pair of matching quotes around a scalar, without decoding."""
     value = value.strip()
     if len(value) >= 2 and value[0] == value[-1] and value[0] in QUOTE_CHARS:
         return value[1:-1]
     return value
+
+
+def decode_scalar(text: str) -> str:
+    """Decode a one-line YAML scalar the way a YAML parser would.
+
+    Raises ValueError for a quoted scalar that does not close on its line or
+    uses an escape this reader does not know.
+    """
+    text = text.strip()
+    if not text or text[0] not in QUOTE_CHARS:
+        return text
+    quote = text[0]
+    if len(text) < 2 or text[-1] != quote:
+        raise ValueError("quoted scalar does not close on its line")
+    inner = text[1:-1]
+    if quote == SINGLE_QUOTE:
+        return inner.replace(SINGLE_QUOTE * 2, SINGLE_QUOTE)
+    decoded, index = [], 0
+    while index < len(inner):
+        char = inner[index]
+        if char != BACKSLASH:
+            decoded.append(char)
+            index += 1
+            continue
+        code = inner[index + 1 : index + 2]
+        if code in SIMPLE_ESCAPES:
+            decoded.append(SIMPLE_ESCAPES[code])
+            index += 2
+        elif code in HEX_ESCAPES:
+            digits = inner[index + 2 : index + 2 + HEX_ESCAPES[code]]
+            if len(digits) != HEX_ESCAPES[code] or not all(d in "0123456789abcdefABCDEF" for d in digits):
+                raise ValueError("escape sequence is not valid")
+            decoded.append(chr(int(digits, 16)))
+            index += 2 + len(digits)
+        else:
+            raise ValueError("escape sequence is not supported")
+    return "".join(decoded)
+
+
+def decode_block(header: str, block: list[tuple[int, str]], indent: int) -> str:
+    """Decode a block scalar body: strip its indentation, then keep or fold lines."""
+    stripped = [line[indent:] if line.strip() else "" for _, line in block]
+    if header[0] == "|":
+        return "\n".join(stripped).strip("\n")
+    folded, pending = [], []
+    for line in stripped:
+        if line:
+            pending.append(line)
+        else:
+            if pending:
+                folded.append(" ".join(pending))
+                pending = []
+            folded.append("")
+    if pending:
+        folded.append(" ".join(pending))
+    return "\n".join(folded).strip("\n")
 
 
 def flow_depth(text: str) -> int:
@@ -187,16 +282,19 @@ def parse_flow(text: str):
             quote = text[position]
             position += 1
             while position < len(text) and text[position] != quote:
-                position += 1
+                position += 2 if quote == DOUBLE_QUOTE and text[position] == BACKSLASH else 1
             if position >= len(text):
                 raise ValueError("unterminated quoted scalar")
             position += 1
-            return text[start + 1 : position - 1]
+            return decode_scalar(text[start:position])
         while position < len(text) and text[position] not in stops:
             if text[position] in "{[":
                 raise ValueError("unexpected collection inside a scalar")
             position += 1
-        return text[start:position].strip()
+        plain = text[start:position].strip()
+        if plain[:1] in {"&", "*", "!"} or plain == "<<":
+            raise ValueError("anchors, aliases, tags and merge keys are not followed")
+        return plain
 
     def value(stops: str):
         skip_space()
@@ -262,7 +360,7 @@ def parse_workflow(text: str) -> tuple[list[Node], list[tuple[int, str]]]:
     nodes: list[Node] = []
     problems: list[tuple[int, str]] = []
     stack = [Frame(indent=-1, path=())]
-    lines = text.splitlines()
+    lines = text.lstrip(BYTE_ORDER_MARK).splitlines()
     last_scalar: tuple[int, int] | None = None  # (index in nodes, key indent)
     index = 0
 
@@ -282,14 +380,26 @@ def parse_workflow(text: str) -> tuple[list[Node], list[tuple[int, str]]]:
         nonlocal index, last_scalar
         last_scalar = None
         if value[0] in "|>":
+            if any(char not in "+-0123456789" for char in value[1:]):
+                problems.append((number, "block scalar header is not understood"))
+            explicit = next((int(char) for char in value[1:] if char.isdigit()), 0)
+            content_indent = key_indent + explicit if explicit else None
             block = []
             while index < len(lines):
                 line = lines[index]
-                if line.strip() and len(line) - len(line.lstrip(" ")) <= key_indent:
-                    break
+                if line.strip():
+                    depth = len(line) - len(line.lstrip(" "))
+                    if content_indent is None:
+                        if depth <= key_indent:
+                            break
+                        content_indent = depth
+                    if depth < content_indent:
+                        break
                 block.append((index + 1, line))
                 index += 1
-            body = "\n".join(item for _, item in block)
+            while block and not block[-1][1].strip():
+                block.pop()
+            body = decode_block(value, block, content_indent or 0)
             nodes.append(Node(path, body, number, tuple(block)))
         elif value[0] in "&*!":
             problems.append((number, "anchors, aliases and tags are not followed"))
@@ -310,7 +420,13 @@ def parse_workflow(text: str) -> tuple[list[Node], list[tuple[int, str]]]:
                 problems.append((number, f"flow collection not read: {error}"))
                 nodes.append(Node(path, None, number))
         else:
-            nodes.append(Node(path, strip_quotes(value), number, ((number, value),)))
+            try:
+                decoded = decode_scalar(value)
+            except ValueError as error:
+                problems.append((number, f"scalar not read: {error}"))
+                nodes.append(Node(path, None, number))
+                return
+            nodes.append(Node(path, decoded, number, ((number, decoded),)))
             last_scalar = (len(nodes) - 1, key_indent)
 
     while index < len(lines):
@@ -337,6 +453,7 @@ def parse_workflow(text: str) -> tuple[list[Node], list[tuple[int, str]]]:
             ):
                 stack.pop()
             parent = stack[-1]
+            parent.has_children = True
             item_path = parent.path + (f"[{parent.count}]",)
             parent.count += 1
             stack.append(Frame(indent=indent, path=item_path, is_item=True))
@@ -356,8 +473,8 @@ def parse_workflow(text: str) -> tuple[list[Node], list[tuple[int, str]]]:
             top = stack[-1]
             if dashed:
                 emit(top.path, body, number, indent)
-            elif body[0] in "{[" and top.is_open and not top.is_item and indent > top.indent:
-                # A flow collection written on the line after its key.
+            elif top.is_open and not top.is_item and not top.has_children and indent > top.indent:
+                # A scalar or flow collection written on the line after its key.
                 top.is_open = False
                 emit(top.path, body, number, top.indent)
             elif last_scalar and indent > last_scalar[1]:
@@ -372,10 +489,15 @@ def parse_workflow(text: str) -> tuple[list[Node], list[tuple[int, str]]]:
                 problems.append((number, "line is not a key, a list item or a scalar continuation"))
             continue
 
-        key = strip_quotes(match.group("key"))
+        try:
+            key = decode_scalar(match.group("key"))
+        except ValueError as error:
+            problems.append((number, f"key not read: {error}"))
+            continue
         value = (match.group("value") or "").strip()
         while len(stack) > 1 and stack[-1].indent >= indent:
             stack.pop()
+        stack[-1].has_children = True
         path = stack[-1].path + (key,)
         if value:
             stack.append(Frame(indent=indent, path=path, is_open=False))
@@ -408,15 +530,70 @@ def is_image_ref(path: tuple[str, ...]) -> bool:
     )
 
 
+def is_env_key(path: tuple[str, ...]) -> bool:
+    """True for a variable in an env block GitHub actually exports."""
+    if len(path) < 2 or path[-2] != "env":
+        return False
+    owner = path[:-2]
+    return (
+        owner == ()
+        or (len(owner) == 2 and owner[0] == "jobs")
+        or (len(owner) == 4 and owner[0] == "jobs" and owner[2] in {"steps", "services"})
+        or (len(owner) == 3 and owner[0] == "jobs" and owner[2] == "container")
+    )
+
+
+def image_references(nodes: list[Node]) -> tuple[list[tuple[str, int]], list[tuple[int, str]]]:
+    """Every container image a workflow names.
+
+    Returns (image, line) pairs and (line, reason) for references that are
+    expressions this reader could not resolve. An image taken from a matrix
+    axis resolves to the literal values of that axis.
+    """
+    images: list[tuple[str, int]] = []
+    unresolved: list[tuple[int, str]] = []
+    for node in nodes:
+        value = node.value
+        if not value:
+            continue
+        if is_action_ref(node.path):
+            if value.startswith("docker://"):
+                images.append((value, node.line))
+            continue
+        if not is_image_ref(node.path):
+            continue
+        if "${{" not in value:
+            images.append((value, node.line))
+            continue
+        axis = MATRIX_VALUE.match(value)
+        matrix = node.path[:2] + ("strategy", "matrix")
+        literals = [
+            (other.value, other.line)
+            for other in nodes
+            if axis
+            and other.value
+            and (
+                other.path[:-1] == matrix + (axis.group(1),)
+                or (other.path[:-2] == matrix + ("include",) and other.path[-1] == axis.group(1))
+            )
+        ]
+        if literals and all("${{" not in image for image, _ in literals):
+            images.extend(literals)
+        else:
+            unresolved.append((node.line, f"image '{value}' is an expression that could not be resolved"))
+    return images, unresolved
+
+
 def injected_lines(node: Node) -> list[int]:
     """Line numbers where an untrusted context is expanded inside a scalar."""
     text = "\n".join(item for _, item in node.lines)
     hits = []
     for match in EXPRESSION.finditer(text):
-        # Drop whitespace and escape characters, then read ['key'] as .key
-        compact = "".join(match.group(1).split()).replace(chr(92), "")
-        expression = BRACKET_ACCESS.sub(r".\1", compact)
-        if UNTRUSTED_CONTEXT.search(expression):
+        # GitHub reads names without regard to case, and a['b'], a.b and a[0]
+        # are all property access. A quoted string is data, not a reference.
+        compact = "".join(match.group(1).split()).replace(BACKSLASH, "").lower()
+        compact = INDEX_ACCESS.sub(r".\1", BRACKET_ACCESS.sub(r".\1", compact))
+        if UNTRUSTED_CONTEXT.search(STRING_LITERAL.sub("''", compact)):
             offset = text.count("\n", 0, match.start())
             hits.append(node.lines[offset][0] if node.lines else node.line)
     return hits
@@ -429,8 +606,12 @@ def lint_workflow(text: str, path: str) -> list[Finding]:
     def add(rule: str, line: int, message: str) -> None:
         findings.append(Finding(path, line, rule, message))
 
-    for line, reason in problems:
+    images, unresolved = image_references(nodes)
+    for line, reason in problems + unresolved:
         add("unparsed-construct", line, f"{reason}, so this part was not checked")
+    for image, line in images:
+        if not IMAGE_DIGEST.search(image):
+            add("unpinned-image", line, f"'{image}' is not pinned to a sha256 digest")
 
     if not any(node.path == ("permissions",) for node in nodes):
         add(
@@ -473,8 +654,7 @@ def lint_workflow(text: str, path: str) -> list[Finding]:
 
         if is_action_ref(where) and value:
             if value.startswith("docker://"):
-                if not IMAGE_DIGEST.search(value):
-                    add("unpinned-image", node.line, f"'{value}' is not pinned to a sha256 digest")
+                pass  # checked with the other images below
             elif not value.startswith("./") and not FULL_SHA_REF.match(value):
                 add(
                     "unpinned-action",
@@ -490,9 +670,6 @@ def lint_workflow(text: str, path: str) -> list[Finding]:
                         "set 'persist-credentials: false' under this step's 'with'",
                     )
 
-        if is_image_ref(where) and value and "${{" not in value and not IMAGE_DIGEST.search(value):
-            add("unpinned-image", node.line, f"'{value}' is not pinned to a sha256 digest")
-
         is_sink = is_step_key(where, "run") or (
             len(where) == 6 and where[0] == "jobs" and where[4:] == ("with", "script")
         )
@@ -504,7 +681,7 @@ def lint_workflow(text: str, path: str) -> list[Finding]:
                     "untrusted context expanded inside a script, pass it through env",
                 )
 
-        if len(where) >= 2 and where[-2] == "env" and where[-1] in CREDENTIAL_ENV and value:
+        if is_env_key(where) and where[-1] in CREDENTIAL_ENV and value:
             add(
                 "static-cloud-credential",
                 node.line,
@@ -584,7 +761,7 @@ def real_host(url: str) -> str | None:
 
 
 def python_env_defaults(text: str) -> list[tuple[int, str]]:
-    """Find (line, url) for environment lookups that fall back to a URL."""
+    """Find (line, url) for os environment lookups that fall back to a URL."""
     try:
         tree = ast.parse(text)
     except (SyntaxError, ValueError):
@@ -593,11 +770,37 @@ def python_env_defaults(text: str) -> list[tuple[int, str]]:
             for match in PY_ENV_DEFAULT.finditer(text)
         ]
 
+    # Resolve what the file imported, so `env(...)` from `from os import
+    # getenv as env` counts and `Config().getenv(...)` does not.
+    # The bare name `os` counts even without a visible import.
+    modules, getters, environs = {"os"}, set(), set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(alias.asname or alias.name for alias in node.names if alias.name == "os")
+        elif isinstance(node, ast.ImportFrom) and node.module == "os":
+            for alias in node.names:
+                if alias.name == "getenv":
+                    getters.add(alias.asname or alias.name)
+                elif alias.name == "environ":
+                    environs.add(alias.asname or alias.name)
+
+    def is_os(node: ast.AST) -> bool:
+        return isinstance(node, ast.Name) and node.id in modules
+
+    def is_environ(node: ast.AST) -> bool:
+        if isinstance(node, ast.Name):
+            return node.id in environs
+        return isinstance(node, ast.Attribute) and node.attr == "environ" and is_os(node.value)
+
     def is_lookup(node: ast.AST) -> bool:
         if not isinstance(node, ast.Call):
             return False
-        name = ast.unparse(node.func)
-        return name == "getenv" or name.endswith((".getenv", "environ.get"))
+        func = node.func
+        if isinstance(func, ast.Name):
+            return func.id in getters
+        if not isinstance(func, ast.Attribute):
+            return False
+        return (func.attr == "getenv" and is_os(func.value)) or (func.attr == "get" and is_environ(func.value))
 
     def urls(node: ast.AST | None) -> list[tuple[int, str]]:
         is_text = isinstance(node, ast.Constant) and isinstance(node.value, str)
