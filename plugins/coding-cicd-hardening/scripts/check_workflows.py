@@ -73,8 +73,8 @@ SIMPLE_ESCAPES = {
     BACKSLASH: BACKSLASH,
 }
 HEX_ESCAPES = {"x": 2, "u": 4, "U": 8}
-# A quote only opens a quoted scalar where a scalar can start.
-SCALAR_STARTS = frozenset({"", ":", "-", ",", "{", "["})
+# Inside a flow collection a quote opens a quoted scalar only after one of these.
+FLOW_SCALAR_STARTS = frozenset({"", ":", ",", "{", "["})
 FULL_SHA_REF = re.compile(r"^[^@\s]+@[0-9a-f]{40}$")
 IMAGE_DIGEST = re.compile(r"@sha256:[0-9a-f]{64}$")
 KEY_LINE = re.compile(
@@ -153,36 +153,80 @@ class Frame:
     has_children: bool = False
 
 
-def strip_comment(text: str) -> str:
-    """Drop a YAML comment, following the quoting rules of each scalar style.
-
-    A quote character only opens a quoted scalar where a scalar can start.
-    Inside a plain scalar it is ordinary text, so a later hash still starts a
-    comment. Inside double quotes a backslash escapes the next character.
-    """
-    quote, previous, index = "", "", 0
+def quoted_end(text: str) -> int:
+    """Index just past the closing quote of a scalar that starts text, or -1."""
+    quote, index = text[0], 1
     while index < len(text):
         char = text[index]
-        if quote == DOUBLE_QUOTE:
-            if char == BACKSLASH:
+        if quote == DOUBLE_QUOTE and char == BACKSLASH:
+            index += 2
+            continue
+        if char == quote:
+            if quote == SINGLE_QUOTE and text[index + 1 : index + 2] == SINGLE_QUOTE:
                 index += 2
                 continue
-            if char == DOUBLE_QUOTE:
-                quote = ""
-        elif quote == SINGLE_QUOTE:
-            if char == SINGLE_QUOTE:
-                if text[index + 1 : index + 2] == SINGLE_QUOTE:
+            return index + 1
+        index += 1
+    return -1
+
+
+def strip_value_comment(value: str) -> str:
+    """Drop a trailing comment from one value, by the rules of its scalar style."""
+    if not value:
+        return value
+    if value[0] in QUOTE_CHARS:
+        # A quoted scalar: only text after its closing quote can be a comment.
+        end = quoted_end(value)
+        if end < 0:
+            return value
+        tail = re.search(r"(^|\s)#", value[end:])
+        return value[: end + tail.start()] if tail else value
+    if value[0] in "{[":
+        # A flow collection: quotes delimit scalars inside it.
+        quote, previous, index = "", "", 0
+        while index < len(value):
+            char = value[index]
+            if quote:
+                if quote == DOUBLE_QUOTE and char == BACKSLASH:
                     index += 2
                     continue
-                quote = ""
-        elif char in QUOTE_CHARS and previous in SCALAR_STARTS:
-            quote = char
-        elif char == "#" and (index == 0 or text[index - 1].isspace()):
-            return text[:index]
-        if not char.isspace():
-            previous = char
-        index += 1
-    return text
+                if char == quote:
+                    if quote == SINGLE_QUOTE and value[index + 1 : index + 2] == SINGLE_QUOTE:
+                        index += 2
+                        continue
+                    quote = ""
+            elif char in QUOTE_CHARS and previous in FLOW_SCALAR_STARTS:
+                quote = char
+            elif char == "#" and (index == 0 or value[index - 1].isspace()):
+                return value[:index]
+            if not char.isspace():
+                previous = char
+            index += 1
+        return value
+    # A plain scalar: quotes and brackets are ordinary text, so the first
+    # hash after whitespace starts the comment.
+    match = re.search(r"(^|\s)#", value)
+    return value[: match.start()] if match else value
+
+
+def strip_comment(text: str) -> str:
+    """Drop a YAML comment from one line with its indentation removed.
+
+    The line is split into list dashes, an optional key and a value, because
+    whether a quote character is a delimiter depends on where it stands.
+    """
+    prefix = len(text) - len(re.sub(r"^(-\s+)+", "", text))
+    rest = text[prefix:]
+    if rest.startswith("#"):
+        return text[:prefix]
+    match = KEY_LINE.match(rest)
+    if match and match.group("value") is not None:
+        head, value = rest[: match.start("value")], match.group("value")
+    elif match:
+        head, value = rest, ""
+    else:
+        head, value = "", rest
+    return text[:prefix] + head + strip_value_comment(value)
 
 
 def strip_quotes(value: str) -> str:
@@ -278,22 +322,21 @@ def parse_flow(text: str):
         nonlocal position
         skip_space()
         start = position
-        if position < len(text) and text[position] in QUOTE_CHARS:
-            quote = text[position]
-            position += 1
-            while position < len(text) and text[position] != quote:
-                position += 2 if quote == DOUBLE_QUOTE and text[position] == BACKSLASH else 1
-            if position >= len(text):
+        if position >= len(text):
+            raise ValueError("unexpected end of flow collection")
+        if text[position] in QUOTE_CHARS:
+            end = quoted_end(text[start:])
+            if end < 0:
                 raise ValueError("unterminated quoted scalar")
-            position += 1
+            position = start + end
             return decode_scalar(text[start:position])
         while position < len(text) and text[position] not in stops:
             if text[position] in "{[":
                 raise ValueError("unexpected collection inside a scalar")
             position += 1
         plain = text[start:position].strip()
-        if plain[:1] in {"&", "*", "!"} or plain == "<<":
-            raise ValueError("anchors, aliases, tags and merge keys are not followed")
+        if plain[:1] in {"&", "*", "!", "?"} or plain == "<<":
+            raise ValueError("anchors, aliases, tags, explicit keys and merge keys are not followed")
         return plain
 
     def value(stops: str):
@@ -324,9 +367,16 @@ def parse_flow(text: str):
                 result[key] = value(",}")
             else:
                 result[key] = ""
-            skip_space()
-            if position < len(text) and text[position] == ",":
-                position += 1
+            separator("}")
+
+    def separator(closing: str) -> None:
+        """After an entry there must be a comma or the end of the collection."""
+        nonlocal position
+        skip_space()
+        if position < len(text) and text[position] == ",":
+            position += 1
+        elif position >= len(text) or text[position] != closing:
+            raise ValueError("entries are not separated by a comma")
 
     def sequence() -> list:
         nonlocal position
@@ -340,9 +390,7 @@ def parse_flow(text: str):
                 position += 1
                 return result
             result.append(value(",]"))
-            skip_space()
-            if position < len(text) and text[position] == ",":
-                position += 1
+            separator("]")
 
     parsed = value("")
     skip_space()
@@ -567,6 +615,14 @@ def image_references(nodes: list[Node]) -> tuple[list[tuple[str, int]], list[tup
             continue
         axis = MATRIX_VALUE.match(value)
         matrix = node.path[:2] + ("strategy", "matrix")
+        # A matrix, an axis or an include list that is itself an expression
+        # can add values this reader never sees.
+        computed = any(
+            other.value
+            and "${{" in other.value
+            and (other.path == matrix or (axis and other.path in {matrix + (axis.group(1),), matrix + ("include",)}))
+            for other in nodes
+        )
         literals = [
             (other.value, other.line)
             for other in nodes
@@ -577,24 +633,48 @@ def image_references(nodes: list[Node]) -> tuple[list[tuple[str, int]], list[tup
                 or (other.path[:-2] == matrix + ("include",) and other.path[-1] == axis.group(1))
             )
         ]
-        if literals and all("${{" not in image for image, _ in literals):
+        if literals and not computed and all("${{" not in image for image, _ in literals):
             images.extend(literals)
         else:
             unresolved.append((node.line, f"image '{value}' is an expression that could not be resolved"))
     return images, unresolved
 
 
+def expressions(text: str) -> list[tuple[int, str]]:
+    """Find (offset, body) for each GitHub expression in a scalar.
+
+    The closing braces are looked for outside single-quoted strings, the way
+    the runner reads them, so a string that contains braces does not end
+    the expression early.
+    """
+    found, cursor = [], 0
+    while True:
+        start = text.find("${{", cursor)
+        if start < 0:
+            return found
+        index, quoted = start + 3, False
+        while index < len(text):
+            char = text[index]
+            if char == SINGLE_QUOTE:
+                quoted = not quoted
+            elif not quoted and text.startswith("}}", index):
+                break
+            index += 1
+        found.append((start, text[start + 3 : index]))
+        cursor = index + 2
+
+
 def injected_lines(node: Node) -> list[int]:
     """Line numbers where an untrusted context is expanded inside a scalar."""
     text = "\n".join(item for _, item in node.lines)
     hits = []
-    for match in EXPRESSION.finditer(text):
+    for start, body in expressions(text):
         # GitHub reads names without regard to case, and a['b'], a.b and a[0]
         # are all property access. A quoted string is data, not a reference.
-        compact = "".join(match.group(1).split()).replace(BACKSLASH, "").lower()
+        compact = "".join(body.split()).replace(BACKSLASH, "").lower()
         compact = INDEX_ACCESS.sub(r".\1", BRACKET_ACCESS.sub(r".\1", compact))
         if UNTRUSTED_CONTEXT.search(STRING_LITERAL.sub("''", compact)):
-            offset = text.count("\n", 0, match.start())
+            offset = text.count("\n", 0, start)
             hits.append(node.lines[offset][0] if node.lines else node.line)
     return hits
 
@@ -626,7 +706,8 @@ def lint_workflow(text: str, path: str) -> list[Finding]:
         if is_step_key(node.path, "uses") and node.value:
             step_action[node.path[:4]] = node.value
         if len(node.path) == 6 and node.path[0] == "jobs" and node.path[4] == "with":
-            step_inputs.setdefault(node.path[:4], {})[node.path[5]] = node.value or ""
+            # The runner matches action input names without regard to case.
+            step_inputs.setdefault(node.path[:4], {})[node.path[5].lower()] = node.value or ""
 
     for node in nodes:
         where, value = node.path, node.value
@@ -670,9 +751,9 @@ def lint_workflow(text: str, path: str) -> list[Finding]:
                         "set 'persist-credentials: false' under this step's 'with'",
                     )
 
-        is_sink = is_step_key(where, "run") or (
-            len(where) == 6 and where[0] == "jobs" and where[4:] == ("with", "script")
-        )
+        is_input = len(where) == 6 and where[0] == "jobs" and where[4] == "with"
+        input_name = where[5].lower() if is_input else ""
+        is_sink = is_step_key(where, "run") or input_name == "script"
         if is_sink and value:
             for line in injected_lines(node):
                 add(
@@ -687,15 +768,21 @@ def lint_workflow(text: str, path: str) -> list[Finding]:
                 node.line,
                 f"{where[-1]} is a long-lived cloud key, use OIDC workload identity federation",
             )
-        if len(where) == 6 and where[0] == "jobs" and where[4] == "with" and value:
+        if is_input and value:
             action = step_action.get(where[:4], "").split("@")[0].lower()
             scoped = CREDENTIAL_INPUTS_BY_ACTION.get(action, set())
-            if where[5] in CREDENTIAL_INPUTS or where[5] in scoped:
+            if input_name in CREDENTIAL_INPUTS or input_name in scoped:
                 add(
                     "static-cloud-credential",
                     node.line,
                     f"'{where[5]}' passes a long-lived cloud credential, use OIDC workload identity federation",
                 )
+        if where and where[-1] == "env" and is_env_key(where + ("x",)) and value and "${{" in value:
+            add(
+                "unparsed-construct",
+                node.line,
+                "env is built from an expression, so its variable names were not checked",
+            )
 
     return findings
 
@@ -777,7 +864,7 @@ def python_env_defaults(text: str) -> list[tuple[int, str]]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             modules.update(alias.asname or alias.name for alias in node.names if alias.name == "os")
-        elif isinstance(node, ast.ImportFrom) and node.module == "os":
+        elif isinstance(node, ast.ImportFrom) and node.module == "os" and node.level == 0:
             for alias in node.names:
                 if alias.name == "getenv":
                     getters.add(alias.asname or alias.name)

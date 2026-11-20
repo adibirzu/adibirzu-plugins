@@ -15,6 +15,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import sys
 import unittest
 from pathlib import Path
@@ -223,6 +224,15 @@ class MarketplaceSchemaTest(unittest.TestCase):
                     plugin["category"], {"development", "security", "devops", "productivity"}
                 )
                 self.assertTrue(plugin["homepage"].startswith("https://github.com/adibirzu/"))
+
+    def test_entries_carry_metadata_only(self) -> None:
+        # A catalog entry can also inject hooks, commands, agents and servers
+        # into a plugin. Those would run without being part of the scanned
+        # plugin directory, so this marketplace does not allow them.
+        allowed = {"name", "description", "version", "author", "source", "category", "homepage"}
+        for plugin in self.data["plugins"]:
+            with self.subTest(plugin=plugin.get("name")):
+                self.assertEqual(set(plugin) - allowed, set())
 
     def test_plugin_names_are_unique(self) -> None:
         names = [plugin["name"] for plugin in self.data["plugins"]]
@@ -454,9 +464,12 @@ class WorkflowHardeningTest(unittest.TestCase):
         scan = [line for line in commands if "gitleaks\" detect" in line or "gitleaks detect" in line]
         self.assertEqual(len(scan), 1)
         self.assertIn("--redact", scan[0])
+        # Read the command the way the shell does, so text in a comment does not count.
+        tokens = shlex.split(scan[0], comments=True)
+        log_opts = [token.split("=", 1)[1] for token in tokens if token.startswith("--log-opts=")]
+        self.assertEqual(len(log_opts), 1)
         # Without merge diffs a secret added while resolving a conflict is never scanned.
-        self.assertIn("--diff-merges=first-parent", scan[0])
-        self.assertIn("--all", scan[0])
+        self.assertEqual(log_opts[0].split(), ["--full-history", "--all", "--diff-merges=first-parent"])
 
     def test_sbom_workflow_generates_validates_and_uploads_both_formats(self) -> None:
         path = WORKFLOWS / "sbom.yml"

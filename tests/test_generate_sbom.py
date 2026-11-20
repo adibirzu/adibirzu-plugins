@@ -197,8 +197,15 @@ class SourceShapesTest(GeneratorCase):
             {"name": "scp-url", "source": {"source": "url", "url": "git@github.com:Example/Mono.git"}},
         )
         self.assertEqual(cdx["ssh-url"]["purl"], f"pkg:github/example/mono@{self.SHA_B}")
-        self.assertEqual(spdx["ssh-url"]["downloadLocation"], f"git+ssh://git@github.com/Example/Mono.git@{self.SHA_B}")
+        # SPDX download locations carry no user information.
+        self.assertEqual(spdx["ssh-url"]["downloadLocation"], f"git+ssh://github.com/Example/Mono.git@{self.SHA_B}")
         self.assertEqual(cdx["scp-url"]["purl"], "pkg:github/example/mono")
+        self.assertEqual(spdx["scp-url"]["downloadLocation"], "git+ssh://github.com/Example/Mono.git")
+
+    def test_ssh_url_with_a_port_keeps_its_github_identity(self) -> None:
+        source = {"source": "git-subdir", "url": "ssh://git@github.com:22/example/demo.git", "path": "tools"}
+        cdx, _ = self.catalog({"name": "ported", "source": source})
+        self.assertEqual(cdx["ported"]["purl"], "pkg:github/example/demo#tools")
 
     def test_subpaths_are_percent_encoded(self) -> None:
         source = {"source": "git-subdir", "url": "example/monorepo", "path": "tools/my formatter", "sha": self.SHA_B}
@@ -216,6 +223,16 @@ class SourceShapesTest(GeneratorCase):
         )
         self.assertEqual(cdx["embedded"]["purl"], "pkg:npm/%40example/formatter@2.0.0")
         self.assertEqual(cdx["private"]["purl"], "pkg:npm/formatter@1.0.0?repository_url=https%3A%2F%2Fnpm.example.com")
+
+    def test_npm_range_is_not_presented_as_a_version(self) -> None:
+        cdx, _ = self.catalog(
+            {"name": "ranged", "source": {"source": "npm", "package": "@example/demo", "version": "^2.0.0"}},
+            {"name": "tagged", "source": {"source": "npm", "package": "demo", "version": "latest"}},
+        )
+        self.assertEqual(cdx["ranged"]["purl"], "pkg:npm/%40example/demo")
+        selectors = {p["name"]: p["value"] for p in cdx["ranged"]["properties"]}
+        self.assertEqual(selectors["marketplace:revision"], "^2.0.0")
+        self.assertEqual(cdx["tagged"]["purl"], "pkg:npm/demo")
 
     def test_bare_local_source_resolves_under_plugin_root(self) -> None:
         self.write(
@@ -236,6 +253,38 @@ class SourceShapesTest(GeneratorCase):
             self.assertEqual(self.generator.main([str(self.root), "--output-dir", str(inside)]), 0)
             outputs.append((inside / "marketplace.cdx.json").read_bytes())
         self.assertEqual(outputs[0], outputs[1])
+
+    def test_root_plugin_digest_survives_output_into_the_root(self) -> None:
+        self.write(".claude-plugin/plugin.json", json.dumps({"name": "root-plugin", "version": "1.0.0"}))
+        self.write(".claude-plugin/marketplace.json", json.dumps({"name": "demo-market", "plugins": [{"name": "root-plugin", "source": "."}]}))
+
+        def digest() -> str:
+            self.assertEqual(self.generator.main([str(self.root), "--output-dir", str(self.root)]), 0)
+            cdx = json.loads((self.root / "marketplace.cdx.json").read_text(encoding="utf-8"))
+            plugin = next(c for c in cdx["components"] if c["name"] == "root-plugin")
+            return {p["name"]: p["value"] for p in plugin["properties"]}["marketplace:tree-sha256"]
+
+        first = digest()
+        self.assertEqual(first, digest())
+        self.write("plugins/local-one/skills/a/SKILL.md", "---\nname: a\ndescription: Edited.\n---\n")
+        self.assertNotEqual(first, digest())
+
+    def test_duplicate_names_are_rejected_even_when_manifests_differ(self) -> None:
+        for folder, version in (("one", "2.0.0"), ("two", "3.0.0")):
+            self.write(f"plugins/{folder}/.claude-plugin/plugin.json", json.dumps({"name": "demo", "version": version}))
+        self.write(
+            ".claude-plugin/marketplace.json",
+            json.dumps(
+                {
+                    "name": "demo-market",
+                    "plugins": [
+                        {"name": "demo", "version": "1.0.0", "source": "./plugins/one"},
+                        {"name": "demo", "version": "1.0.0", "source": "./plugins/two"},
+                    ],
+                }
+            ),
+        )
+        self.assertEqual(self.generator.main([str(self.root), "--output-dir", str(self.out)]), 2)
 
     def test_duplicate_catalog_identities_are_rejected(self) -> None:
         self.write(
@@ -400,6 +449,16 @@ class DeterminismAndCliTest(GeneratorCase):
             _, second = self.generate()
         self.assertNotEqual(first["creationInfo"]["created"], second["creationInfo"]["created"])
         self.assertNotEqual(first["documentNamespace"], second["documentNamespace"])
+
+    def test_documents_that_differ_never_share_an_identity(self) -> None:
+        name, components, _, _ = self.generator.build_inventory(self.root)
+        created = "2026-11-20T00:00:00Z"
+        complete = self.generator.spdx(name, components, created, False)
+        partial = self.generator.spdx(name, components, created, True)
+        self.assertNotEqual(complete["documentNamespace"], partial["documentNamespace"])
+        old = self.generator.cyclonedx(name, components, "1.6", created)
+        new = self.generator.cyclonedx(name, components, "1.7", created)
+        self.assertNotEqual(old["serialNumber"], new["serialNumber"])
 
     def test_unsupported_spec_version_is_rejected(self) -> None:
         with self.assertRaises(SystemExit) as caught:

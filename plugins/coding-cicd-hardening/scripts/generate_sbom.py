@@ -48,10 +48,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import check_workflows  # noqa: E402
 
 TOOL_NAME = "generate_sbom.py"
-TOOL_VERSION = "1.2.0"
+TOOL_VERSION = "1.3.0"
+OUTPUT_NAMES = ("marketplace.cdx.json", "marketplace.spdx.json")
 SPEC_VERSIONS = ("1.6", "1.7")
 SKIP_NAMES = {"__pycache__", ".DS_Store", "node_modules", ".git"}
-GITHUB_REPO = re.compile(r"^(?:https?://|ssh://git@)github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$")
+GITHUB_REPO = re.compile(r"^(?:https?|ssh)://github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$")
+SSH_URL = re.compile(r"^ssh://(?:[^@/]+@)?([^/:]+)(?::\d+)?/(.+)$")
+EXACT_VERSION = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?$")
 GITHUB_SHORTHAND = re.compile(r"^[\w.-]+/[\w.-]+$")
 SCP_STYLE = re.compile(r"^git@([^:/]+):(.+)$")
 GIT_TRANSPORTS = ("https://", "http://", "ssh://", "git://")
@@ -93,18 +96,18 @@ class Component:
         return f"{self.kind}:{self.name}@{self.version}"
 
 
-def tree_digest(root: Path, exclude: Path | None = None) -> str:
+def tree_digest(root: Path, exclude: frozenset[Path] = frozenset()) -> str:
     """Hash every file path and content under root, in sorted order.
 
-    ``exclude`` is a directory to leave out, so a plugin at the repository
-    root does not hash the SBOMs this tool writes into it.
+    ``exclude`` holds the files this tool writes, so a plugin at the
+    repository root does not hash its own SBOMs.
     """
     digest = hashlib.sha256()
     for path in sorted(p for p in root.rglob("*") if p.is_file()):
         relative = path.relative_to(root)
         if SKIP_NAMES.intersection(relative.parts) or path.suffix == ".pyc":
             continue
-        if exclude is not None and (path == exclude or exclude in path.parents):
+        if path.resolve() in exclude:
             continue
         digest.update(relative.as_posix().encode("utf-8") + b"\0")
         digest.update(hashlib.sha256(path.read_bytes()).hexdigest().encode("ascii") + b"\n")
@@ -123,7 +126,12 @@ def git_identity(url: str, revision: str, subpath: str) -> dict:
         url = f"https://github.com/{url}"
     scp = SCP_STYLE.match(url)
     if scp:
-        url = f"ssh://git@{scp.group(1)}/{scp.group(2)}"
+        url = f"ssh://{scp.group(1)}/{scp.group(2)}"
+    ssh = SSH_URL.match(url)
+    if ssh:
+        # Keep host and path. A user name and a port are access details and
+        # SPDX does not allow user information in a download location.
+        url = f"ssh://{ssh.group(1)}/{ssh.group(2)}"
     if not url.startswith(GIT_TRANSPORTS):
         return {}
     suffix = f"#{quote(subpath, safe='/')}" if subpath else ""
@@ -144,20 +152,26 @@ def git_identity(url: str, revision: str, subpath: str) -> dict:
 
 
 def npm_identity(package: str, version: str, registry: str) -> dict:
-    """Package URL for an npm source. A version inside the package name wins."""
+    """Package URL for an npm source. A version inside the package name wins.
+
+    Only an exact version goes into the package URL. A range or a tag such
+    as ^2.0.0 or latest can resolve to different releases over time, so it
+    is kept as the declared selector and the package URL carries no version.
+    """
     if package.startswith(("https://", "http://")):
         return {"distribution_url": package, "download": package}
     name = package
     if "@" in package[1:]:
         name, _, embedded = package.rpartition("@")
         version = embedded or version
-    purl = f"pkg:npm/{quote(name, safe='/')}" + (f"@{quote(version, safe='')}" if version else "")
+    exact = bool(EXACT_VERSION.match(version))
+    purl = f"pkg:npm/{quote(name, safe='/')}" + (f"@{quote(version, safe='')}" if exact else "")
     if registry:
         purl += f"?repository_url={quote(registry, safe='')}"
-    return {"purl": purl}
+    return {"purl": purl, "revision": version or "latest"}
 
 
-def local_plugin(root: Path, entry: dict, source: str, plugin_root: str, exclude: Path | None) -> Component:
+def local_plugin(root: Path, entry: dict, source: str, plugin_root: str, exclude: frozenset[Path]) -> Component:
     name = entry["name"]
     # A source that is not a relative path is a bare name under pluginRoot.
     is_path = source in {".", ".."} or source.startswith(("./", "../"))
@@ -184,7 +198,9 @@ def local_plugin(root: Path, entry: dict, source: str, plugin_root: str, exclude
     )
 
 
-def plugin_component(root: Path, entry: dict, plugin_root: str = "", exclude: Path | None = None) -> Component:
+def plugin_component(
+    root: Path, entry: dict, plugin_root: str = "", exclude: frozenset[Path] = frozenset()
+) -> Component:
     source = entry.get("source")
     if isinstance(source, str):
         return local_plugin(root, entry, source, plugin_root, exclude)
@@ -264,12 +280,18 @@ def workflow_components(root: Path) -> tuple[list[Component], list[str]]:
     return [found[key] for key in sorted(found)], sorted(unread)
 
 
-def build_inventory(root: Path, exclude: Path | None = None) -> tuple[str, list[Component], list[str]]:
+def build_inventory(
+    root: Path, exclude: frozenset[Path] = frozenset()
+) -> tuple[str, list[Component], list[str], list[str]]:
+    """Return the catalog name, its components, unread workflow parts and duplicate names."""
     data = json.loads((root / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
+    entries = data.get("plugins", [])
+    names = [str(entry.get("name", "")) for entry in entries]
+    duplicates = sorted({name for name in names if names.count(name) > 1})
     plugin_root = str((data.get("metadata") or {}).get("pluginRoot", ""))
-    plugins = [plugin_component(root, entry, plugin_root, exclude) for entry in data.get("plugins", [])]
+    plugins = [plugin_component(root, entry, plugin_root, exclude) for entry in entries]
     actions, unread = workflow_components(root)
-    return data.get("name", root.name), plugins + actions, unread
+    return data.get("name", root.name), plugins + actions, unread, duplicates
 
 
 def timestamp() -> str:
@@ -278,9 +300,14 @@ def timestamp() -> str:
     return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def content_uuid(name: str, components: list[Component], created: str) -> str:
-    """A stable identity for one document: its content, build time and tool."""
-    seed = json.dumps([name, created, TOOL_VERSION] + [repr(c) for c in components], sort_keys=True)
+def content_uuid(name: str, components: list[Component], created: str, flavor: str) -> str:
+    """A stable identity for one document.
+
+    Seeded with everything that makes two documents differ: content, build
+    time, tool version and ``flavor``, which names the format, its schema
+    version and whether the inventory is complete.
+    """
+    seed = json.dumps([name, created, TOOL_VERSION, flavor] + [repr(c) for c in components], sort_keys=True)
     return str(uuid.uuid5(uuid.NAMESPACE_URL, seed))
 
 
@@ -335,7 +362,7 @@ def cyclonedx(
         "$schema": f"http://cyclonedx.org/schema/bom-{spec_version}.schema.json",
         "bomFormat": "CycloneDX",
         "specVersion": spec_version,
-        "serialNumber": f"urn:uuid:{content_uuid(name, components, created)}",
+        "serialNumber": f"urn:uuid:{content_uuid(name, components, created, f'cyclonedx-{spec_version}-{incomplete}')}",
         "version": 1,
         "metadata": metadata,
         "components": items,
@@ -416,7 +443,8 @@ def spdx(name: str, components: list[Component], created: str, incomplete: bool 
         "SPDXID": "SPDXRef-DOCUMENT",
         "name": f"{name}-sbom",
         "documentNamespace": (
-            f"https://spdx.org/spdxdocs/{quote(name, safe='')}-{content_uuid(name, components, created)}"
+            f"https://spdx.org/spdxdocs/{quote(name, safe='')}-"
+            f"{content_uuid(name, components, created, f'spdx-2.3-{incomplete}')}"
         ),
         "creationInfo": {"created": created, "creators": [f"Tool: {TOOL_NAME}-{TOOL_VERSION}"]},
         "packages": packages,
@@ -449,12 +477,18 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     output = Path(args.output_dir)
-    name, components, unread = build_inventory(root, exclude=output.resolve())
+    generated = frozenset((output / name).resolve() for name in OUTPUT_NAMES)
+    name, components, unread, duplicates = build_inventory(root, exclude=generated)
 
-    references = [component.ref for component in components]
-    duplicates = sorted({ref for ref in references if references.count(ref) > 1})
+    # Plugin names are unique in a marketplace. Checked on the catalog itself,
+    # before a local manifest can give two entries different versions.
     if duplicates:
-        print(f"error: the catalog lists the same name and version twice: {', '.join(duplicates)}", file=sys.stderr)
+        print(f"error: the catalog lists a plugin name more than once: {', '.join(duplicates)}", file=sys.stderr)
+        return 2
+    references = [component.ref for component in components]
+    clashes = sorted({ref for ref in references if references.count(ref) > 1})
+    if clashes:
+        print(f"error: two components share one identity: {', '.join(clashes)}", file=sys.stderr)
         return 2
     if unread:
         for line in unread:

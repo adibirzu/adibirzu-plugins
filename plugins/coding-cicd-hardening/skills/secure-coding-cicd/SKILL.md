@@ -75,9 +75,17 @@ keys or flow collections that span lines. It reports each of those as
 pass. Treat that finding as work to do: rewrite the construct in plain block
 style or review that part by hand.
 
+It errs toward reporting. Two known cases where it flags something that is
+in fact fine: a matrix `exclude` that removes an unpinned image value, and a
+test where a function parameter shadows an imported `getenv`.
+
+This linter is a fast first gate with no dependencies. It is not a full
+workflow analyzer. Run actionlint and zizmor next to it in CI for complete
+expression and YAML coverage.
+
 Check these by hand as well:
 
-- Images named through an expression such as a matrix value.
+- Images named through an expression other than a literal matrix axis.
 - Actions called from inside a composite action or a reusable workflow in
   another repository.
 - Whether a pinned SHA belongs to the repository named in `uses`. A SHA from
@@ -85,8 +93,6 @@ Check these by hand as well:
 - Repository settings: branch protection, required reviews, secret scanning
   and push protection, and the default token permission.
 
-For a deeper static pass on workflows, run a dedicated analyzer such as
-zizmor next to this linter. The two overlap on purpose.
 
 ## Reporting
 

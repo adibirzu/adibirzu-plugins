@@ -437,6 +437,56 @@ class WorkflowRulesTest(LinterCase):
                 self.workflow(GOOD_WORKFLOW.replace("jobs:\n  test:\n", block if block.startswith("jobs") else block + "jobs:\n  test:\n"))
                 self.assertEqual(self.rules(), ["static-cloud-credential"])
 
+    def test_expression_end_is_found_outside_quoted_strings(self) -> None:
+        step = "      - run: echo \"${{ format('}} {0}', github.event.comment.body) }}\"\n"
+        self.workflow(GOOD_WORKFLOW + step)
+        self.assertEqual(self.rules(), ["script-injection"])
+        self.workflow(GOOD_WORKFLOW + "      - run: echo \"${{ format('}} {0}', github.sha) }}\"\n")
+        self.assertEqual(self.rules(), [])
+
+    def test_matrix_axis_given_as_an_expression_is_reported(self) -> None:
+        matrix = (
+            "    strategy:\n      matrix:\n"
+            "        image: ${{ fromJSON('[\"alpine:3.20\"]') }}\n"
+            "        include:\n          - image: alpine@sha256:" + "d" * 64 + "\n"
+            "    container: ${{ matrix.image }}\n"
+        )
+        self.workflow(GOOD_WORKFLOW.replace("    steps:\n", matrix + "    steps:\n"))
+        self.assertEqual(self.rules(), ["unparsed-construct"])
+
+    def test_shell_quotes_in_a_plain_scalar_do_not_hide_a_comment(self) -> None:
+        self.workflow(GOOD_WORKFLOW + "      - run: echo '[' # ${{ github.event.comment.body }}\n")
+        self.assertEqual(self.rules(), [])
+        self.workflow(GOOD_WORKFLOW + "      - run: 'echo # ${{ github.event.comment.body }}'\n")
+        self.assertEqual(self.rules(), ["script-injection"])
+
+    def test_flow_collections_are_read_whole_or_reported(self) -> None:
+        explicit = GOOD_WORKFLOW.replace("on:\n  push:\n    branches: [main]\n  pull_request:\n", "on: {? pull_request_target: {}}\n")
+        self.workflow(explicit)
+        self.assertEqual(self.rules(), ["unparsed-construct"])
+        doubled = GOOD_WORKFLOW + "      - {run: 'echo It''s ${{ github.event.comment.body }}'}\n"
+        self.workflow(doubled)
+        self.assertEqual(self.rules(), ["script-injection"])
+        # After a quoted scalar only a comma or the closing bracket may follow.
+        self.workflow(GOOD_WORKFLOW.replace("    branches: [main]\n", "    branches: ['main' release]\n"))
+        self.assertEqual(self.rules(), ["unparsed-construct"])
+
+    def test_action_input_names_are_matched_without_regard_to_case(self) -> None:
+        script = GOOD_WORKFLOW + (
+            f"      - uses: actions/github-script@{SHA}\n        with:\n"
+            "          SCRIPT: console.log('${{ github.event.comment.body }}')\n"
+        )
+        self.workflow(script)
+        self.assertEqual(self.rules(), ["script-injection"])
+        self.workflow(GOOD_WORKFLOW.replace("persist-credentials: false", "Persist-Credentials: false"))
+        self.assertEqual(self.rules(), [])
+        self.workflow(GOOD_WORKFLOW + f"      - uses: azure/login@{SHA}\n        with:\n          CREDS: x\n")
+        self.assertEqual(self.rules(), ["static-cloud-credential"])
+
+    def test_env_map_built_from_an_expression_is_reported(self) -> None:
+        self.workflow(GOOD_WORKFLOW.replace("        env:\n          TITLE: ${{ github.event.pull_request.title }}\n", "        env: ${{ fromJSON(secrets.AWS_ENV) }}\n"))
+        self.assertEqual(self.rules(), ["unparsed-construct"])
+
     def test_same_indent_sequences_are_read(self) -> None:
         text = (
             "name: ci\non:\n- push\npermissions: {}\njobs:\n  test:\n    runs-on: ubuntu-24.04\n    steps:\n"
@@ -530,6 +580,10 @@ class TestIsolationRulesTest(LinterCase):
         self.assertEqual(self.rules(), ["prod-url-default"])
         unrelated = f'BASE = Config().getenv("API_URL", "https://api.{REAL_HOST}")\n'
         self.write("tests/test_api.py", unrelated)
+        self.assertEqual(self.rules(), [])
+
+    def test_relative_import_named_os_is_not_the_standard_library(self) -> None:
+        self.write("tests/test_api.py", f'from .os import getenv\nBASE = getenv("API_URL", "https://api.{REAL_HOST}")\n')
         self.assertEqual(self.rules(), [])
 
     def test_local_and_reserved_hosts_are_allowed(self) -> None:

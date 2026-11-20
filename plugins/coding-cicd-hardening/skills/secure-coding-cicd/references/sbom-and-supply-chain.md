@@ -67,6 +67,9 @@ It writes `sbom/marketplace.cdx.json` and `sbom/marketplace.spdx.json`.
   and no ref tracks the default branch, so its purl has no version and the
   component carries `marketplace:revision: default-branch`. The catalog
   version is a label and is never used as a revision.
+- An npm source gets a version in its purl only when it names an exact
+  version. A range or a tag such as `^2.0.0` or `latest` is kept as the
+  declared selector in `marketplace:revision`.
 - Pinned actions carry the commit SHA as their version.
 - Job, service and step container images are listed as container
   components with their tag or digest. Images taken from a matrix axis are
