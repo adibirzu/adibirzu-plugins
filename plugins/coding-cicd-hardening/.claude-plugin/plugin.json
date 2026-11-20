@@ -1,0 +1,13 @@
+{
+  "name": "coding-cicd-hardening",
+  "version": "1.0.0",
+  "description": "Secure coding and CI/CD baseline: SHA-pinned actions, OIDC instead of static keys, least-privilege tokens, CycloneDX 1.7 and SPDX 2.3 SBOMs, gitleaks, SAST, Dependabot, test isolation, plus a standard-library workflow linter and SBOM generator.",
+  "author": {
+    "name": "adibirzu",
+    "url": "https://github.com/adibirzu"
+  },
+  "homepage": "https://github.com/adibirzu/adibirzu-plugins/tree/main/plugins/coding-cicd-hardening",
+  "repository": "https://github.com/adibirzu/adibirzu-plugins.git",
+  "license": "MIT",
+  "keywords": ["security", "ci-cd", "github-actions", "sbom", "supply-chain"]
+}

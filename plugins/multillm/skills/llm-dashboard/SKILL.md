@@ -1,5 +1,5 @@
 ---
-name: LLM Dashboard
+name: llm-dashboard
 description: Open the MultiLLM dashboard showing sessions, token usage, costs, and backend status. Use when the user asks about LLM usage, costs, dashboard, or wants to see model statistics.
 version: 0.6.0
 ---

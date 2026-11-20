@@ -1,0 +1,10 @@
+# The scripts are standard library only and must run on any supported Python.
+target-version = "py39"
+line-length = 120
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "C4", "SIM"]
+
+[lint.per-file-ignores]
+# Tests use temp files and long one-line workflow fixtures.
+"tests/*" = ["S101", "S108", "E501"]

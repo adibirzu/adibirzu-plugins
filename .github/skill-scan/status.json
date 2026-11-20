@@ -1,0 +1,36 @@
+{
+  "scanner": "SkillSpector",
+  "scanner_version": "2.12.0",
+  "mode": "--no-llm --recursive, whole plugin bundle",
+  "scanned": "2026-11-20",
+  "plugins": {
+    "multillm": {
+      "verdict": "DO_NOT_INSTALL",
+      "score": 100,
+      "findings": 37,
+      "coverage": "partial",
+      "tree_sha256": "60664e440ebb84c9664bb5ce3cb62488aa531bcdeeb850f8737c46c0acd120c7"
+    },
+    "just-do-it": {
+      "verdict": "CAUTION",
+      "score": 44,
+      "findings": 5,
+      "coverage": "complete",
+      "tree_sha256": "639a72564d4f8195629273635ff127664e7802209d8502bbbfd8cce8ed69debe"
+    },
+    "poteto-workflow": {
+      "verdict": "SAFE",
+      "score": 0,
+      "findings": 0,
+      "coverage": "complete",
+      "tree_sha256": "b9d5e4bd83d48ccf84b07407264bf0882e4e562dc027ed8675e55ed89c064ae4"
+    },
+    "coding-cicd-hardening": {
+      "verdict": "SAFE",
+      "score": 0,
+      "findings": 0,
+      "coverage": "complete",
+      "tree_sha256": "48dd25c45dc2247a9a4b40611790f2419a8dc073a1993dbc7e1ff32f78c86b63"
+    }
+  }
+}
